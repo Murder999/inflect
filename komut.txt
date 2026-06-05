@@ -1,0 +1,13 @@
+cd C:\Users\buse3\Desktop\inflect
+
+docker compose down -v
+docker compose up --build
+
+
+cd C:\Users\buse3\Desktop\inflect
+docker compose up --build
+
+
+
+docker compose down
+docker compose up --build

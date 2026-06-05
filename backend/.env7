@@ -1,0 +1,48 @@
+# =============================================
+# INFLECT — Backend Environment Configuration
+# =============================================
+# cp .env.example .env  →  then fill in your values
+
+# App
+APP_NAME=Inflect
+APP_ENV=development
+SECRET_KEY=your-super-secret-key-change-this-in-production-min-32-chars
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+REFRESH_TOKEN_EXPIRE_DAYS=30
+
+# Database (PostgreSQL)
+DATABASE_URL=postgresql+asyncpg://inflect:inflect@localhost:5432/inflect_db
+
+# Redis (caching + rate limiting)
+REDIS_URL=redis://localhost:6379/0
+
+# Data Providers
+APIFY_TOKEN=
+YOUTUBE_API_KEY=
+INSTAGRAM_ACTOR=apify/instagram-profile-scraper
+TIKTOK_ACTOR=clockworks/tiktok-scraper
+
+# AI Providers (for report generation)
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Stripe
+STRIPE_SECRET_KEY=sk_test_
+STRIPE_PUBLISHABLE_KEY=pk_test_
+STRIPE_WEBHOOK_SECRET=whsec_
+
+# Email (SMTP)
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_USER=resend
+SMTP_PASSWORD=
+FROM_EMAIL=efecevikk@gmail.com
+FROM_NAME=159951.efe.
+
+# Frontend URL (for CORS + email links)
+FRONTEND_URL=http://localhost:3000
+
+# Admin
+ADMIN_EMAIL=efecevikk@gmail.com
+ADMIN_PASSWORD=159951.efe.

@@ -1,0 +1,80 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: inflect_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: inflect
+      POSTGRES_PASSWORD: inflect
+      POSTGRES_DB: inflect_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inflect -d inflect_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: inflect_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inflect_backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      # Docker servis isimleri hostname olarak kullanılır
+      DATABASE_URL: postgresql+asyncpg://inflect:inflect@postgres:5432/inflect_db
+      REDIS_URL: redis://redis:6379/0
+      FRONTEND_URL: http://localhost:3000
+      APP_ENV: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser'dan localhost:8000'e istek atılır (Docker network değil)
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    container_name: inflect_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    # NOT: condition: service_healthy KALDIRILDI.
+    # Frontend her zaman başlar; backend gecikiyorsa login sayfası hata gösterir.
+    # Bu development için doğru davranış.
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
