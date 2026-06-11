@@ -44,6 +44,16 @@ _REGISTRY: dict[str, str] = {
     "archive-classifier":     "app.services.agents.archive_ai_agents:InfluencerClassifierAgent",
     "archive-cleaner-agent":  "app.services.agents.archive_ai_agents:ArchiveCleanerAgent",
     "competitor-intel-agent": "app.services.agents.campaign_agents:CompetitorIntelAgent",
+    # ── Part 11 new agents ────────────────────────────────────────────────────────
+    "security-agent":         "app.services.agents.security_agent:SecurityAgent",
+    "cto-agent":              "app.services.agents.cto_agent:CtoAgent",
+    "data-quality-agent":     "app.services.agents.data_quality_agent:DataQualityAgent",
+    # ── Part 12 Digital Twin ──────────────────────────────────────────────────────
+    "digital-twin-agent":     "app.services.agents.digital_twin_agent:DigitalTwinAgent",
+    # ── Part 13 Competitor Intelligence ──────────────────────────────────────────
+    "competitor-intelligence-agent": "app.services.agents.competitor_intelligence_agent:CompetitorIntelligenceAgent",
+    # ── Part 15 Risk Radar ────────────────────────────────────────────────────────
+    "risk-radar-agent":              "app.services.agents.risk_radar_agent:RiskRadarAgent",
 }
 
 # Provider assignment (model routing guide)
@@ -80,6 +90,16 @@ PROVIDER_MAP: dict[str, str] = {
     "archive-cleaner-agent":  "mock",
     # Competitor Intel — Gemini (cost-efficient for analysis)
     "competitor-intel-agent": "gemini",
+    # Part 11 — new agents
+    "security-agent":         "claude",
+    "cto-agent":              "claude",
+    "data-quality-agent":     "mock",   # uses real DB, no LLM needed
+    # Part 12 — Digital Twin (pure computation, no external LLM)
+    "digital-twin-agent":     "mock",
+    # Part 13 — Competitor Intelligence (archive-based, no external LLM in mock mode)
+    "competitor-intelligence-agent": "mock",
+    # Part 15 — Risk Radar (archive-based, no external LLM)
+    "risk-radar-agent": "mock",
 }
 
 

@@ -423,6 +423,16 @@ export const archiveApi = {
       `/archive/analyze/${id}?brand=${encodeURIComponent(brand)}`, { method: "POST" }
     ),
 
+  /** Avatar eksik profillere provider'dan gerçek URL çeker */
+  resolveAvatars: (limit = 50) =>
+    request<{
+      processed: number;
+      resolved:  number;
+      failed:    number;
+      errors:    { profile_id: number; username: string; platform: string; error: string }[];
+      note?:     string;
+    }>(`/archive/resolve-avatars?limit=${limit}`, { method: "POST" }),
+
   /** JSON dosyasından toplu influencer import (multipart/form-data) */
   importJson: async (file: File) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;

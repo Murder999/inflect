@@ -19,14 +19,15 @@ from app.core.deps import get_current_admin
 from app.models.user import User
 from app.models.agent import (
     Agent, AgentTask, AgentRun,
-    AgentConversation, AgentMessage,
+    AgentConversation, AgentMessage, AgentEvent,
     AgentApproval, AgentMemory, AgentProviderHealth,
-    AgentStatus, ModelProvider, RiskLevel,
+    AgentStatus, AgentMode, ModelProvider, RiskLevel,
     TaskStatus, TaskPriority, ApprovalStatus,
 )
 from app.services.agent_registry import list_agents, get_agent_by_id, get_agent_by_slug
 from app.services.agent_task_engine import create_task, run_task, list_tasks, list_runs
-from app.services.agent_orchestrator import run_mock_scenario, get_system_overview
+from app.services.agent_orchestrator import run_mock_scenario, run_orchestration, get_system_overview
+from app.services.event_bus import publish as publish_event, list_events as list_agent_events
 from app.services.agent_conversation_service import (
     list_conversations, get_conversation_with_messages,
 )
@@ -81,17 +82,38 @@ class CopilotRequest(BaseModel):
     competitors: list[str] = []
 
 
+class AgentModeUpdateRequest(BaseModel):
+    """Admin: per-agent execution mode change."""
+    mode: str  # mock | active | disabled
+
+
+class EventCreateRequest(BaseModel):
+    """Publish a system event to the event bus."""
+    event_type: str
+    payload: Optional[dict[str, Any]] = None
+    source: str = "admin"
+
+
 # ─── Serializers ─────────────────────────────────────────────────────────────
 
 def _agent(a: Agent) -> dict:
     return {
         "id": a.id, "slug": a.slug, "name": a.name, "description": a.description,
         "role": a.role,
+        "department": a.department,
         "status": a.status.value if hasattr(a.status, "value") else str(a.status),
+        "mode": a.mode.value if hasattr(a.mode, "value") else str(getattr(a, "mode", "mock")),
         "model_provider": a.model_provider.value if hasattr(a.model_provider, "value") else str(a.model_provider),
         "model_name": a.model_name,
         "risk_level": a.risk_level.value if hasattr(a.risk_level, "value") else str(a.risk_level),
         "is_enabled": a.is_enabled,
+        "is_scheduled": getattr(a, "is_scheduled", False),
+        "schedule_cron": getattr(a, "schedule_cron", None),
+        "next_run_at": a.next_run_at.isoformat() if getattr(a, "next_run_at", None) else None,
+        "autonomy_level": getattr(a, "autonomy_level", "supervised"),
+        "health_status": getattr(a, "health_status", "unknown"),
+        "failure_count": getattr(a, "failure_count", 0),
+        "last_error": getattr(a, "last_error", None),
         "last_run_at": a.last_run_at.isoformat() if a.last_run_at else None,
         "created_at": a.created_at.isoformat() if a.created_at else "",
         "updated_at": a.updated_at.isoformat() if a.updated_at else "",
@@ -117,11 +139,28 @@ def _run(r: AgentRun) -> dict:
     return {
         "id": r.id, "agent_id": r.agent_id, "task_id": r.task_id,
         "provider": r.provider, "model": r.model, "status": r.status,
+        "is_mock": getattr(r, "is_mock", True),
+        "mode_used": getattr(r, "mode_used", None),
         "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
         "cost_estimate": r.cost_estimate, "latency_ms": r.latency_ms,
+        "input_summary": getattr(r, "input_summary", None),
+        "output_summary": getattr(r, "output_summary", None),
+        "confidence": getattr(r, "confidence", None),
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "completed_at": r.completed_at.isoformat() if r.completed_at else None,
         "error_message": r.error_message, "metadata": r.metadata_,
+    }
+
+
+def _event(e: AgentEvent) -> dict:
+    return {
+        "id": e.id, "event_type": e.event_type, "payload": e.payload,
+        "source": e.source, "status": e.status,
+        "related_agent_id": e.related_agent_id,
+        "related_task_id": e.related_task_id,
+        "created_at": e.created_at.isoformat() if e.created_at else "",
+        "processed_at": e.processed_at.isoformat() if e.processed_at else None,
+        "error_message": e.error_message,
     }
 
 
@@ -275,11 +314,38 @@ async def get_provider_health(db: AsyncSession = Depends(get_db), admin: User = 
 
 @router.post("/mock-run")
 async def mock_run(db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin)):
-    """Part 1-2 uyumlu mock run senaryosu."""
-    return await run_mock_scenario(session=db, triggered_by_user_id=admin.id)
+    """Backward-compatible mock run — returns enriched response for frontend."""
+    result = await run_mock_scenario(session=db, triggered_by_user_id=admin.id)
 
+    # Enrich response with fields expected by frontend
+    conv_id = result.get("conversation_id")
+    message_count = 0
+    if conv_id:
+        from app.services.agent_conversation_service import get_conversation_with_messages
+        conv, msgs = await get_conversation_with_messages(db, conv_id)
+        message_count = len(msgs)
 
-# ─── YENİ: Part 3 Orchestrate endpoint ───────────────────────────────────────
+    sub_task_ids = result.get("sub_task_ids", [])
+    agents_involved: list[str] = []
+    for tid in sub_task_ids:
+        t_res = await db.execute(
+            select(AgentTask).where(AgentTask.id == tid)
+        )
+        t = t_res.scalar_one_or_none()
+        if t:
+            a_res = await db.execute(select(Agent).where(Agent.id == t.agent_id))
+            ag = a_res.scalar_one_or_none()
+            if ag and ag.slug not in agents_involved:
+                agents_involved.append(ag.slug)
+
+    return {
+        **result,
+        "scenario": "system_health_review",
+        "message_count": message_count,
+        "agents_involved": agents_involved,
+        "note": f"Orchestration {'MOCK' if result.get('is_mock') else 'ACTIVE'} modunda tamamlandı.",
+    }
+
 
 @router.post("/orchestrate")
 async def orchestrate(
@@ -288,94 +354,46 @@ async def orchestrate(
     admin: User = Depends(get_current_admin),
 ):
     """
-    CEO Agent'ı çalıştırır. CEO, task_type'a göre doğru sub-ajanları seçer,
-    görevleri dağıtır, sonuçları conversation timeline'a yazar.
-
-    Desteklenen task_type'lar:
-    - orchestrated_review (tüm ajanlar)
-    - system_health_review (ops + qa + legal)
-    - product_roadmap_review (pm + legal)
-    - code_change_plan (dev + qa + legal)
-    - pricing_review (finance)
-    - compliance_review (legal)
-    - qa_checklist (qa)
+    Mode-aware orchestration via CEO Agent.
+    No hardcoded scripts — runs real tasks through the task engine.
+    In MOCK mode: agent responses come from role-appropriate mock templates.
+    In ACTIVE mode: real LLM providers used (API keys required).
     """
-    from app.services.agents.agent_factory import get_agent_class_for_slug
-
-    # CEO agent'ı yükle
-    ceo_record = await get_agent_by_slug(db, "ceo-orchestrator")
-    if not ceo_record:
-        raise HTTPException(503, "CEO Agent bulunamadı. Sistem seed edilmemiş.")
-    if not ceo_record.is_enabled:
-        raise HTTPException(400, "CEO Agent devre dışı.")
-
-    CeoClass = get_agent_class_for_slug("ceo-orchestrator")
-    if not CeoClass:
-        raise HTTPException(503, "CEO Agent class yüklenemedi.")
-
-    # Ana task oluştur
-    try:
-        priority = TaskPriority(req.priority)
-    except ValueError:
-        priority = TaskPriority.NORMAL
-
-    parent_task = await create_task(
+    result = await run_orchestration(
         session=db,
-        agent_id=ceo_record.id,
         title=req.title,
         task_type=req.task_type,
         description=req.description,
-        priority=priority,
-        created_by_user_id=admin.id,
+        priority=req.priority,
+        triggered_by_user_id=admin.id,
     )
+    if "error" in result:
+        raise HTTPException(503, result["error"])
+    return result
 
-    # CEO'yu çalıştır
-    ceo_instance = CeoClass(agent_record=ceo_record, db=db)
-    try:
-        result = await ceo_instance.execute(parent_task)
-    except Exception as exc:
-        parent_task.status = TaskStatus.FAILED
-        await db.flush()
-        raise HTTPException(500, f"CEO Agent hatası: {exc}") from exc
 
-    # Parent task sonucunu kaydet
-    parent_task.status = TaskStatus.COMPLETED
-    parent_task.output_data = result.output
-    parent_task.risk_level = RiskLevel(result.risk_level)
+@router.get("/events")
+async def get_events(
+    event_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """List persisted agent events from the event bus."""
+    events = await list_agent_events(db, limit=limit, event_type=event_type, status=status)
+    return {"events": [_event(e) for e in events], "total": len(events)}
 
-    # CEO için run kaydı
-    from app.models.agent import AgentRun
-    from datetime import datetime, timezone
-    ceo_run = AgentRun(
-        agent_id=ceo_record.id,
-        task_id=parent_task.id,
-        provider="mock",
-        model="ceo-orchestrator-v1",
-        status="completed" if result.success else "failed",
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        cost_estimate=0.0,
-        latency_ms=result.latency_ms,
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
-        metadata_={"part": "part-3", "orchestration": True},
-    )
-    db.add(ceo_run)
-    ceo_record.status = AgentStatus.IDLE
-    ceo_record.last_run_at = datetime.now(timezone.utc)
-    await db.flush()
 
-    return {
-        "success":          result.success,
-        "parent_task":      _task(parent_task),
-        "conversation_id":  result.output.get("conversation_id"),
-        "sub_task_count":   result.output.get("total_sub_tasks", 0),
-        "high_risk_count":  result.output.get("high_risk_count", 0),
-        "approval_id":      result.output.get("approval_id"),
-        "risk_level":       result.risk_level,
-        "summary":          result.summary,
-        "note":             "Part 3: Structured output. Gerçek API yok.",
-    }
+@router.post("/events")
+async def create_event(
+    req: EventCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Publish an event to the agent event bus (admin-triggered)."""
+    event = await publish_event(db, event_type=req.event_type, payload=req.payload, source=req.source)
+    return {"success": True, "event": _event(event)}
 
 
 # ─── PARAMETRELİ PATH'LER SONDA ───────────────────────────────────────────────
@@ -448,6 +466,72 @@ async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db), admin: Us
                      for m in mem_result.scalars().all()],
         "recent_runs": [_run(r) for r in run_result.scalars().all()],
     }
+
+
+@router.patch("/{agent_id}/mode")
+async def update_agent_mode(
+    agent_id: int,
+    req: AgentModeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Admin: change per-agent execution mode.
+    MOCK = simulated responses, no real API calls.
+    ACTIVE = real LLM providers (requires API key).
+    DISABLED = agent will not execute any tasks.
+    """
+    ag = await get_agent_by_id(db, agent_id)
+    if not ag:
+        raise HTTPException(404, "Agent bulunamadı.")
+
+    valid_modes = ["mock", "active", "disabled"]
+    if req.mode not in valid_modes:
+        raise HTTPException(400, f"Geçersiz mode. Desteklenenler: {valid_modes}")
+
+    from app.core.config import settings
+    if req.mode == "active" and settings.AGENTS_MODE not in ("real", "live"):
+        raise HTTPException(400, "ACTIVE mod için AGENTS_MODE=real gereklidir. .env dosyasını güncelleyin.")
+
+    try:
+        ag.mode = AgentMode(req.mode)
+    except ValueError:
+        ag.mode = AgentMode.MOCK
+
+    if req.mode == "disabled":
+        ag.is_enabled = False
+    elif req.mode in ("mock", "active"):
+        ag.is_enabled = True
+
+    from datetime import datetime, timezone
+    ag.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {
+        "success": True,
+        "agent_id": agent_id,
+        "mode": req.mode,
+        "is_enabled": ag.is_enabled,
+        "note": {
+            "mock":     "Simüle yanıtlar. Gerçek API çağrısı yok.",
+            "active":   "Gerçek LLM provider kullanılıyor. API key gerekli.",
+            "disabled": "Agent devre dışı. Görev almaz.",
+        }.get(req.mode, ""),
+    }
+
+
+@router.post("/schedule/{agent_slug}/trigger")
+async def trigger_schedule_now(
+    agent_slug: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Manually trigger a scheduled agent job immediately."""
+    from app.services.agent_scheduler import trigger_job_now
+    result = await trigger_job_now(db, agent_slug)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return result
 
 
 @router.patch("/{agent_id}/provider")

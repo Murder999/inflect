@@ -46,6 +46,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="tr" suppressHydrationWarning>
       <head>
+        {/* Anti-flash: tema localStorage'dan okunup React hydrate olmadan önce uygulanır */}
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('inflect-theme');if(t!=='light')document.documentElement.setAttribute('data-theme','dark');}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();` }} />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

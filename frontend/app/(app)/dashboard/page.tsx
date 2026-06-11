@@ -15,8 +15,10 @@ function ScoreBadge({ v, risk }: { v: number; risk?: boolean }) {
     ? (v < 25 ? "var(--green)" : v < 50 ? "var(--amber)" : "var(--red)")
     : (v >= 70 ? "var(--green)" : v >= 45 ? "var(--amber)" : "var(--red)");
   return (
-    <span style={{ padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 600,
-      background: `${color}18`, color }}>{v}</span>
+    <span style={{
+      padding: "3px 10px", borderRadius: 99, fontSize: 12, fontWeight: 700,
+      background: `${color}1A`, color, letterSpacing: "-0.01em",
+    }}>{v}</span>
   );
 }
 
@@ -30,7 +32,11 @@ function InfluencerCard({ a, rank, highlight }: { a: AnalysisCard; rank?: number
   return (
     <div className="card" style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
       {rank !== undefined && (
-        <div style={{ width: 20, fontSize: 12, fontWeight: 600, color: rank < 3 ? "var(--brand-600)" : "var(--text-3)", textAlign: "center", flexShrink: 0 }}>
+        <div style={{
+          width: 24, fontSize: rank === 0 ? 14 : 12, fontWeight: 700,
+          color: rank === 0 ? "var(--amber)" : rank < 3 ? "var(--brand-600)" : "var(--text-3)",
+          textAlign: "center", flexShrink: 0,
+        }}>
           {rank + 1}
         </div>
       )}
@@ -117,16 +123,16 @@ export default function DashboardPage() {
       {s && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 12, marginBottom: 24 }}>
           {[
-            { l: "Bu Ay Analiz",    v: s.this_month,          sub: `${s.total_analyses} toplam`,   c: "var(--text-1)" },
-            { l: "Kalan Kredi",     v: s.credits_remaining,   sub: `/ ${s.credits_total}`,          c: s.credits_remaining < 3 ? "var(--red)" : "var(--text-1)" },
-            { l: "Düşük Riskli",    v: s.low_risk,            sub: "fraud < 25",                    c: "var(--green)" },
-            { l: "Orta Riskli",     v: s.medium_risk,         sub: "fraud 25-59",                   c: "var(--amber)" },
-            { l: "Yüksek Riskli",   v: s.high_risk,           sub: "fraud ≥ 60",                    c: "var(--red)" },
+            { l: "Bu Ay Analiz",   v: s.this_month,        sub: `${s.total_analyses} toplam`, c: "var(--brand-600)" },
+            { l: "Kalan Kredi",    v: s.credits_remaining,  sub: `/ ${s.credits_total}`,       c: s.credits_remaining < 3 ? "var(--red)" : "var(--brand-600)" },
+            { l: "Düşük Riskli",   v: s.low_risk,           sub: "fraud < 25",                 c: "var(--green)" },
+            { l: "Orta Riskli",    v: s.medium_risk,        sub: "fraud 25–59",                c: "var(--amber)" },
+            { l: "Yüksek Riskli",  v: s.high_risk,          sub: "fraud ≥ 60",                 c: "var(--red)" },
           ].map((m) => (
-            <div key={m.l} className="card" style={{ padding: "16px 18px" }}>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>{m.l}</div>
-              <div style={{ fontSize: 26, fontWeight: 600, fontFamily: "var(--font-display)", color: m.c }}>{m.v}</div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{m.sub}</div>
+            <div key={m.l} className="card" style={{ padding: "16px 18px", borderTop: `3px solid ${m.c}` }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>{m.l}</div>
+              <div style={{ fontSize: 30, fontWeight: 700, fontFamily: "var(--font-display)", color: m.c, lineHeight: 1 }}>{m.v}</div>
+              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 6 }}>{m.sub}</div>
             </div>
           ))}
         </div>

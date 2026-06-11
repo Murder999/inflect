@@ -170,32 +170,43 @@ export default function AdminPage() {
   };
 
   return (
-    <div>
+    <div style={{ maxWidth: 1200 }}>
       {/* Header */}
-      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div style={{ marginBottom: 28, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 400, margin: "0 0 4px" }}>Super Admin</h1>
-          <p style={{ fontSize: 14, color: "var(--text-3)", margin: 0 }}>Platform yönetim merkezi</p>
+          <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.03em", color: "var(--text-1)" }}>
+            Enterprise Control Center
+          </h1>
+          <p style={{ fontSize: 14, color: "var(--text-3)", margin: 0 }}>Platform yönetim ve analiz merkezi</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Link href="/admin/archive" style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)", textDecoration: "none" }}>Archive</Link>
-          <Link href="/admin/agents/runs" style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)", textDecoration: "none" }}>Run Logs</Link>
-          <button onClick={load} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)" }} disabled={loading}>{loading ? "..." : "↻"}</button>
+          <Link href="/admin/archive" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, background: "var(--bg-elevated)", border: "1px solid var(--line)", color: "var(--text-2)", textDecoration: "none" }}>
+            Archive
+          </Link>
+          <Link href="/admin/agents/runs" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, background: "var(--bg-elevated)", border: "1px solid var(--line)", color: "var(--text-2)", textDecoration: "none" }}>
+            Run Logs
+          </Link>
+          <button onClick={load} style={{ padding: "8px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-elevated)", border: "1px solid var(--line)", color: "var(--text-3)" }} disabled={loading}>
+            {loading ? "..." : "↻"}
+          </button>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "190px 1fr", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 20 }}>
         {/* Sidebar */}
-        <div>
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 12, border: "1px solid var(--line)", padding: 8, height: "fit-content" }}>
           {TABS.map((t) => (
             <button key={t.key} onClick={() => { setTab(t.key); setTicketPanel(null); }} style={{
               width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 8, fontSize: 13,
-              border: "none", marginBottom: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+              border: "none", marginBottom: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 9,
               background: tab === t.key ? "var(--green-bg)" : "transparent",
-              color: tab === t.key ? "var(--brand-700)" : "var(--text-2)",
-              fontWeight: tab === t.key ? 500 : 400,
+              color: tab === t.key ? "var(--green)" : "var(--text-3)",
+              fontWeight: tab === t.key ? 600 : 400,
+              boxShadow: tab === t.key ? "inset 3px 0 0 var(--green)" : "none",
+              transition: "all 0.12s",
             }}>
-              <span>{t.icon}</span>{t.label}
+              <span style={{ fontSize: 13, opacity: 0.8 }}>{t.icon}</span>
+              <span>{t.label}</span>
             </button>
           ))}
         </div>
@@ -208,37 +219,62 @@ export default function AdminPage() {
           {/* ── DASHBOARD ── */}
           {tab === "dashboard" && !loading && data && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
                 {[
-                  ["Toplam Müşteri",  data.total_users],
-                  ["Aktif Müşteri",   data.active_users],
-                  ["Bu Ay Yeni",      data.new_users_month],
-                  ["Toplam Analiz",   data.total_analyses],
-                  ["Bu Ay Analiz",    data.this_month_analyses],
-                  ["MRR",             `$${data.mrr?.toFixed(0) || 0}`],
-                  ["ARR",             `$${data.arr?.toFixed(0) || 0}`],
-                  ["Net Tahmin",      `$${data.estimated_net?.toFixed(0) || 0}`],
-                ].map(([l, v]) => (
-                  <div key={String(l)} className="card" style={{ padding: "14px 16px" }}>
-                    <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>{l}</div>
-                    <div style={{ fontSize: 20, fontWeight: 600, fontFamily: "var(--font-display)", color: "var(--text-1)" }}>{v}</div>
+                  { l: "MRR",            v: `$${(data.mrr || 0).toFixed(0)}`,              color: "var(--green)",    accent: true },
+                  { l: "ARR",            v: `$${(data.arr || 0).toFixed(0)}`,              color: "#6366F1",         accent: true },
+                  { l: "Toplam Müşteri", v: data.total_users,                               color: "var(--brand-500)", accent: false },
+                  { l: "Bu Ay Yeni",     v: data.new_users_month,                           color: "var(--amber)",    accent: false },
+                ].map(({ l, v, color, accent }) => (
+                  <div key={l} className="card" style={{ padding: "18px 20px", borderTop: `3px solid ${color}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>{l}</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: accent ? color : "var(--text-1)", letterSpacing: "-0.04em", lineHeight: 1 }}>{v}</div>
                   </div>
                 ))}
               </div>
-              <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-                <h3 style={{ fontSize: 13, fontWeight: 500, margin: "0 0 10px" }}>Plan Dağılımı</h3>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {Object.entries(data.plans || {}).map(([plan, count]) => (
-                    <div key={plan} style={{ textAlign: "center", padding: "8px 16px", background: "var(--bg-subtle)", borderRadius: 8 }}>
-                      <PlanBadge plan={plan} /><div style={{ fontSize: 18, fontWeight: 600, marginTop: 6 }}>{count as number}</div>
-                    </div>
-                  ))}
-                </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+                {[
+                  { l: "Aktif Müşteri",  v: data.active_users },
+                  { l: "Toplam Analiz",  v: data.total_analyses },
+                  { l: "Bu Ay Analiz",   v: data.this_month_analyses },
+                  { l: "Net Tahmin",     v: `$${(data.estimated_net || 0).toFixed(0)}`, color: (data.estimated_net || 0) >= 0 ? "var(--green)" : "var(--red)" },
+                ].map(({ l, v, color }) => (
+                  <div key={l} className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{l}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: color || "var(--text-1)", letterSpacing: "-0.03em" }}>{v}</div>
+                  </div>
+                ))}
               </div>
-              <div className="card" style={{ padding: 18 }}>
-                <h3 style={{ fontSize: 13, fontWeight: 500, margin: "0 0 6px" }}>API Maliyet Özeti</h3>
-                <div style={{ fontSize: 13, color: "var(--text-2)" }}>
-                  Maliyet: <strong>${data.estimated_api_cost}</strong> · MRR: <strong>${data.estimated_revenue}</strong> · Net: <strong style={{ color: (data.estimated_net || 0) >= 0 ? "var(--green)" : "var(--red)" }}>${data.estimated_net?.toFixed(2) || 0}</strong>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                <div className="card" style={{ padding: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 14 }}>Plan Dağılımı</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {Object.entries(data.plans || {}).map(([plan, count]) => {
+                      const planColors: Record<string, string> = { free: "var(--text-3)", starter: "#3B82F6", pro: "var(--brand-600)", business: "var(--green)" };
+                      const c = planColors[plan] || "var(--text-3)";
+                      return (
+                        <div key={plan} style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 14px", background: `${c}10`, borderRadius: 10, border: `1px solid ${c}30` }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: c, letterSpacing: "-0.04em" }}>{count as number}</div>
+                          <div style={{ fontSize: 11, color: c, fontWeight: 600, textTransform: "capitalize" }}>{plan}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="card" style={{ padding: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 14 }}>API Maliyet Özeti</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {[
+                      { l: "API Maliyeti",    v: `$${data.estimated_api_cost}`,              c: "var(--red)" },
+                      { l: "Gelir (MRR)",     v: `$${data.estimated_revenue}`,               c: "var(--green)" },
+                      { l: "Net Tahmin",      v: `$${(data.estimated_net || 0).toFixed(2)}`, c: (data.estimated_net || 0) >= 0 ? "var(--green)" : "var(--red)" },
+                    ].map(({ l, v, c }) => (
+                      <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 12, color: "var(--text-3)" }}>{l}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </>

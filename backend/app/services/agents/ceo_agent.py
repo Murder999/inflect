@@ -29,6 +29,14 @@ TASK_ROUTING: dict[str, list[str]] = {
     "pricing_review":         ["finance-pricing-agent"],
     "compliance_review":      ["legal-compliance-agent"],
     "qa_checklist":           ["qa-test-agent"],
+    "security_audit":         ["security-agent", "legal-compliance-agent", "ops-agent"],
+    "technical_review":       ["cto-agent", "dev-agent", "qa-test-agent"],
+    "data_quality_audit":     ["data-quality-agent", "archive-cleaner-agent"],
+    "weekly_executive_summary": ["finance-pricing-agent", "ops-agent", "security-agent"],
+    "digital_twin_audit":     ["digital-twin-agent"],
+    "creator_intelligence":   ["digital-twin-agent", "analysis-agent", "brand-fit-agent"],
+    "brand_safety_audit":     ["risk-radar-agent", "legal-compliance-agent"],
+    "risk_radar_scan":        ["risk-radar-agent"],
     "general":                ["ops-agent"],
 }
 

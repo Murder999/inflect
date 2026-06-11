@@ -15,6 +15,11 @@ from app.api.v1.routes import watchlist, discover, campaigns, alerts, billing, s
 from app.api.v1.routes import agents            # Part 1-3 core agent routes
 from app.api.v1.routes import agents_extended   # Part 4 growth/analysis routes
 from app.api.v1.routes import archive           # Part 2 influencer archive
+from app.api.v1.routes import digital_twin             # Part 12 Digital Twin
+from app.api.v1.routes import influencers              # Part 12 Influencer Lookup
+from app.api.v1.routes import competitor_intelligence  # Part 13 Competitor Intel
+from app.api.v1.routes import risk_radar               # Part 15 Risk Radar
+from app.api.v1.routes import admin_intelligence       # Part 16 Intelligence Billing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +32,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 60)
-    logger.info("  Inflect API v4.1  |  ENV: %s", settings.APP_ENV)
+    logger.info("  Inflect API v6.0  |  ENV: %s", settings.APP_ENV)
     logger.info("  DATABASE : %s", settings.DATABASE_URL)
     logger.info("  CORS     : %s", settings.CORS_ORIGINS)
     logger.info("=" * 60)
@@ -44,8 +49,24 @@ async def lifespan(app: FastAPI):
     if app.state.db_ok:
         await _seed(app)
 
-    logger.info("✓ Inflect API v4.2 hazır — http://0.0.0.0:8000")
+    # Start background agent scheduler (Part 11)
+    try:
+        from app.services.agent_scheduler import start_scheduler
+        from app.core.database import AsyncSessionLocal
+        start_scheduler(AsyncSessionLocal)
+        logger.info("✓ Agent scheduler başlatıldı")
+    except Exception as exc:
+        logger.warning("Agent scheduler başlatılamadı: %s", exc)
+
+    logger.info("✓ Inflect API v6.0 hazır — http://0.0.0.0:8000")
     yield
+
+    # Stop scheduler on shutdown
+    try:
+        from app.services.agent_scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
     logger.info("Inflect API kapatılıyor…")
 
 
@@ -83,6 +104,11 @@ async def _seed(app: FastAPI) -> None:
 
             await session.flush()
             await seed_agents(session)
+
+            # Intelligence feature costs (Part 16)
+            from app.services.intelligence_billing import seed_intelligence_features
+            await seed_intelligence_features(session)
+
             await session.commit()
 
         except Exception as exc:
@@ -105,7 +131,7 @@ def _default_packages():
 app = FastAPI(
     title="Inflect API",
     description="Influencer Intelligence Platform + AI Orchestrator",
-    version="4.2.0",
+    version="6.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -142,16 +168,31 @@ app.include_router(agents_extended.router, prefix=PREFIX)  # Part 4
 # Influencer Archive (Part 2)
 app.include_router(archive.router, prefix=PREFIX)
 
+# Digital Twin (Part 12)
+app.include_router(digital_twin.router, prefix=PREFIX)
+
+# Influencer Lookup (Part 12 UX Fix)
+app.include_router(influencers.router, prefix=PREFIX)
+
+# Competitor Intelligence (Part 13)
+app.include_router(competitor_intelligence.router, prefix=PREFIX)
+
+# Risk Radar (Part 15)
+app.include_router(risk_radar.router, prefix=PREFIX)
+
+# Intelligence Billing (Part 16)
+app.include_router(admin_intelligence.router, prefix=PREFIX)
+
 
 @app.get("/")
 def root():
-    return {"name": "Inflect API", "version": "4.2.0", "status": "online", "ai": "part-4"}
+    return {"name": "Inflect API", "version": "8.2.0", "status": "online", "ai": "part-16-intelligence-billing"}
 
 
 @app.get("/api/v1/health")
 def health(request: Request):
     db_ok = getattr(request.app.state, "db_ok", True)
-    return {"status": "ok" if db_ok else "db_error", "version": "4.2.0", "env": settings.APP_ENV, "ai_orchestrator": "part-4"}
+    return {"status": "ok" if db_ok else "db_error", "version": "5.0.0", "env": settings.APP_ENV, "ai_orchestrator": "part-11"}
 
 
 @app.exception_handler(Exception)

@@ -1,6 +1,7 @@
 """
-AI Orchestrator — Agent Models (Part 1)
-Tüm agent tablolarını tanımlar. Mevcut modellere dokunulmaz.
+AI Orchestrator — Agent Models (Part 11)
+Adds: AgentMode, TriggerType, AgentEvent table, new fields on all existing tables.
+Schema change: docker compose down -v && docker compose up --build required.
 """
 from __future__ import annotations
 
@@ -20,6 +21,13 @@ from app.core.database import Base
 
 # ─── Enums ───────────────────────────────────────────────────────────────────
 
+class AgentMode(str, enum.Enum):
+    """Per-agent execution mode. Distinct from AgentStatus (runtime state)."""
+    MOCK     = "mock"      # Dev/test/demo — no real API calls
+    ACTIVE   = "active"    # Real LLM providers, real data
+    DISABLED = "disabled"  # No execution, skip entirely
+
+
 class AgentStatus(str, enum.Enum):
     ACTIVE           = "active"
     IDLE             = "idle"
@@ -33,7 +41,7 @@ class ModelProvider(str, enum.Enum):
     CLAUDE    = "claude"
     OPENAI    = "openai"
     DEEPSEEK  = "deepseek"
-    GEMINI    = "gemini"    # Google Gemini — Part 2
+    GEMINI    = "gemini"
 
 
 class RiskLevel(str, enum.Enum):
@@ -50,6 +58,13 @@ class TaskStatus(str, enum.Enum):
     FAILED           = "failed"
     WAITING_APPROVAL = "waiting_approval"
     CANCELLED        = "cancelled"
+
+
+class TriggerType(str, enum.Enum):
+    MANUAL    = "manual"
+    SCHEDULED = "scheduled"
+    EVENT     = "event"
+    SYSTEM    = "system"
 
 
 class TaskPriority(str, enum.Enum):
@@ -76,10 +91,11 @@ class MessageType(str, enum.Enum):
 
 
 class ApprovalStatus(str, enum.Enum):
-    PENDING  = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    EXPIRED  = "expired"
+    PENDING          = "pending"
+    APPROVED         = "approved"
+    REJECTED         = "rejected"
+    EXPIRED          = "expired"
+    REQUIRES_REVISION = "requires_revision"
 
 
 class ProviderHealthStatus(str, enum.Enum):
@@ -89,7 +105,14 @@ class ProviderHealthStatus(str, enum.Enum):
     UNKNOWN  = "unknown"
 
 
-# ─── JSON column helper (SQLAlchemy native JSON) ──────────────────────────────
+class AgentEventStatus(str, enum.Enum):
+    PENDING   = "pending"
+    ROUTED    = "routed"
+    PROCESSED = "processed"
+    FAILED    = "failed"
+
+
+# ─── JSON column helper ───────────────────────────────────────────────────────
 from sqlalchemy import JSON
 
 
@@ -102,9 +125,14 @@ class Agent(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    role: Mapped[str] = mapped_column(String(100))          # orchestrator / analyst / ops / etc.
+    role: Mapped[str] = mapped_column(String(100))
     status: Mapped[AgentStatus] = mapped_column(
         SAEnum(AgentStatus), default=AgentStatus.IDLE
+    )
+    # Execution mode: controls whether real LLM providers are used
+    mode: Mapped[AgentMode] = mapped_column(
+        SAEnum(AgentMode, native_enum=False, length=20),
+        default=AgentMode.MOCK, server_default="mock",
     )
     model_provider: Mapped[ModelProvider] = mapped_column(
         SAEnum(ModelProvider, native_enum=False, length=20), default=ModelProvider.MOCK
@@ -114,6 +142,26 @@ class Agent(Base):
         SAEnum(RiskLevel), default=RiskLevel.LOW
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Department grouping
+    department: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Scheduling
+    is_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    schedule_cron: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Autonomy
+    autonomy_level: Mapped[str] = mapped_column(
+        String(50), default="supervised", server_default="supervised"
+    )
+    requires_approval_for: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Health tracking
+    health_status: Mapped[str] = mapped_column(String(50), default="unknown", server_default="unknown")
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     last_run_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -158,6 +206,22 @@ class AgentTask(Base):
     )
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     approval_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # How was this task triggered?
+    trigger_type: Mapped[str] = mapped_column(
+        String(50), default="manual", server_default="manual"
+    )
+    event_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Retry tracking
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default="120")
+
+    # Distributed lock (for scheduler)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     started_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -193,6 +257,16 @@ class AgentRun(Base):
     output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cost_estimate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Transparency: was this a mock run?
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mode_used: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # Summaries for admin UI
+    input_summary: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    output_summary: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     started_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -277,6 +351,13 @@ class AgentApproval(Base):
     status: Mapped[ApprovalStatus] = mapped_column(
         SAEnum(ApprovalStatus), default=ApprovalStatus.PENDING, index=True
     )
+
+    # Context for human reviewer
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expected_impact: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    rollback_plan: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     reviewed_by_user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -330,3 +411,31 @@ class AgentProviderHealth(Base):
     metadata_: Mapped[Optional[Any]] = mapped_column(
         "metadata", JSON, nullable=True
     )
+
+
+# ─── 9. agent_events ─────────────────────────────────────────────────────────
+
+class AgentEvent(Base):
+    """Event bus persistence — routes system events to relevant agents."""
+    __tablename__ = "agent_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    payload: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    source: Mapped[str] = mapped_column(String(100), default="system")
+    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+
+    related_agent_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
+    )
+    related_task_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("agent_tasks.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    processed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

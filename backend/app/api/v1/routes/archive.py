@@ -1,12 +1,15 @@
 """
 Archive Routes — Influencer Archive API.
-GET  /archive              — list profiles
-GET  /archive/{id}         — profil detayı + snapshot geçmişi
-POST /archive/seed         — admin: analizlerden archive doldur
-POST /archive/import-json  — admin: JSON dosyasından toplu import
-POST /archive/sync         — admin: tüm pending/needs_sync profilleri sync et (toplu)
-POST /archive/sync/{id}    — admin: tek profil sync (provider'dan metrik güncelle)
-POST /archive/analyze/{id} — admin: tek profil tam analiz (provider + score_engine)
+GET  /archive                              — list profiles
+GET  /archive/{id}                         — profil detayı + snapshot geçmişi
+POST /archive/seed                         — admin: analizlerden archive doldur
+POST /archive/import-json                  — admin: JSON dosyasından toplu import
+POST /archive/resolve-avatars              — admin: toplu avatar resolve
+POST /archive/sync                         — admin: tüm pending/needs_sync profilleri sync et (toplu)
+POST /archive/sync/{id}                    — admin: tek profil sync (provider'dan metrik güncelle)
+POST /archive/analyze/{id}                 — admin: tek profil tam analiz (provider + score_engine)
+POST /archive/profiles/{id}/sync           — admin: tek profil snapshot sync + event
+POST /archive/profiles/{id}/resolve-avatar — admin: tek profil avatar resolve
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -390,6 +393,89 @@ async def import_json_file(
     }
 
 
+# ─── POST /archive/resolve-avatars ───────────────────────────────────────────
+
+@router.post("/resolve-avatars")
+async def resolve_avatars(
+    limit: int = Query(50, ge=1, le=100,
+                       description="Tek seferde işlenecek profil sayısı (max 100)"),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Avatar eksik olan profillere provider'dan gerçek URL çeker ve DB'ye yazar.
+
+    - profile_image_url boş/null olan kayıtları bulur (needs_sync/pending öncelikli).
+    - Her profil için ilgili platform provider'ını çağırır.
+    - Başarılıysa: profile_image_url güncellenir, updated_at yenilenir.
+    - Başarısızsa: profil dokunulmaz, hata errors listesine eklenir.
+    - Fake URL asla yazılmaz.
+    Admin-only. Provider API key gerektirir (APIFY_TOKEN / YOUTUBE_API_KEY).
+    """
+    from app.services.avatar_resolver import resolve_profile_image
+
+    # Avatar eksik profilleri çek — needs_sync/pending önce, sonra eskiden güncellenenler
+    missing_q = (
+        select(InfluencerProfile)
+        .where(
+            or_(
+                InfluencerProfile.profile_image_url.is_(None),
+                InfluencerProfile.profile_image_url == "",
+            )
+        )
+        .order_by(InfluencerProfile.updated_at.asc())
+        .limit(limit)
+    )
+    profiles = (await db.execute(missing_q)).scalars().all()
+
+    if not profiles:
+        return {
+            "processed": 0,
+            "resolved":  0,
+            "failed":    0,
+            "errors":    [],
+            "note":      "Avatar eksik profil bulunamadı.",
+        }
+
+    processed = resolved = failed = 0
+    errors: list[dict] = []
+    cfg: dict = {}
+
+    for profile in profiles:
+        processed += 1
+        result = await resolve_profile_image(profile.platform, profile.username, cfg)
+
+        if result["ok"] and result["profile_image_url"]:
+            profile.profile_image_url = result["profile_image_url"]
+            profile.updated_at        = datetime.now(timezone.utc)
+            resolved += 1
+            logger.info(
+                "Avatar resolved: %s/%s → source=%s",
+                profile.platform, profile.username, result["source"],
+            )
+        else:
+            failed += 1
+            errors.append({
+                "profile_id": profile.id,
+                "username":   profile.username,
+                "platform":   profile.platform,
+                "error":      result.get("error") or "Bilinmeyen hata",
+            })
+            logger.warning(
+                "Avatar resolve başarısız: %s/%s — %s",
+                profile.platform, profile.username, result.get("error"),
+            )
+
+    await db.commit()
+
+    return {
+        "processed": processed,
+        "resolved":  resolved,
+        "failed":    failed,
+        "errors":    errors[:20],   # Max 20 hata detayı döndür
+    }
+
+
 # ─── GET /archive/{id} ───────────────────────────────────────────────────────
 
 @router.get("/{profile_id}")
@@ -515,3 +601,77 @@ async def analyze_one(
     """
     from app.services.archive_sync import analyze_profile_by_id
     return await analyze_profile_by_id(db, profile_id, brand=brand, cfg={})
+
+
+# ─── POST /archive/profiles/{id}/sync ────────────────────────────────────────
+
+@router.post("/profiles/{profile_id}/sync")
+async def sync_profile_instance(
+    profile_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Tek profil snapshot sync (admin). Provider'dan veri çeker, yeni snapshot
+    oluşturur, avatar günceller. Başarılıysa influencer.snapshot.created eventi
+    yayınlanır. Provider API key yoksa sync başarısız olur.
+    """
+    from app.services.archive_sync import sync_profile_by_id
+
+    result = await sync_profile_by_id(db, profile_id, cfg={})
+
+    if result.get("success"):
+        try:
+            from app.services.event_bus import publish as publish_event
+            await publish_event(
+                session=db,
+                event_type="influencer.snapshot.created",
+                payload={"profile_id": profile_id},
+                source="admin:manual_sync",
+            )
+        except Exception:
+            pass
+
+    return result
+
+
+# ─── POST /archive/profiles/{id}/resolve-avatar ───────────────────────────────
+
+@router.post("/profiles/{profile_id}/resolve-avatar")
+async def resolve_profile_avatar(
+    profile_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Tek profil avatar resolve (admin). Platform provider'dan gerçek avatar URL
+    çeker ve DB'ye yazar. Fake URL asla yazılmaz.
+    Provider API key gerektirir (APIFY_TOKEN / YOUTUBE_API_KEY).
+    """
+    from app.services.avatar_resolver import resolve_profile_image
+
+    profile_res = await db.execute(
+        select(InfluencerProfile).where(InfluencerProfile.id == profile_id)
+    )
+    profile = profile_res.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profil bulunamadı.")
+
+    result = await resolve_profile_image(profile.platform, profile.username, cfg={})
+
+    if result["ok"] and result["profile_image_url"]:
+        profile.profile_image_url = result["profile_image_url"]
+        profile.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        logger.info(
+            "Avatar resolved for profile %d (%s/%s): source=%s",
+            profile_id, profile.platform, profile.username, result["source"],
+        )
+
+    return {
+        "profile_id":        profile_id,
+        "ok":                result["ok"],
+        "profile_image_url": result["profile_image_url"],
+        "source":            result["source"],
+        "error":             result.get("error"),
+    }

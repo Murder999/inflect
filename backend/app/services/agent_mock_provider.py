@@ -1,31 +1,32 @@
 """
-Agent Mock Provider — Gerçek API olmadan örnek agent yanıtları üretir.
-Part 2'de gerçek Claude/OpenAI provider ile değiştirilecek.
+Agent Mock Provider — Part 11
+All outputs clearly labeled is_mock=True.
+Latency is estimated (not measured). Token counts are approximations.
+No random confidence scores — mock outputs carry no confidence claim.
 """
 from __future__ import annotations
 
 import random
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from app.models.agent import ModelProvider
 
 
-def _mock_latency() -> int:
-    """80-400ms arası simüle latency."""
+def _estimated_latency() -> int:
+    """Simulated latency for mock runs (not real measurement)."""
     return random.randint(80, 400)
 
 
-def _mock_tokens(prompt: str) -> tuple[int, int]:
-    """Yaklaşık token sayısı tahmini."""
+def _estimated_tokens(prompt: str) -> tuple[int, int]:
+    """Approximate token count — not an accurate measurement."""
     input_t  = max(10, len(prompt.split()) * 4 // 3)
     output_t = random.randint(50, 300)
     return input_t, output_t
 
 
 def _mock_cost(input_t: int, output_t: int, provider: str = "mock") -> float:
-    """Mock maliyet tahmini (USD)."""
+    """Estimated cost (USD) — 0 for mock runs."""
     if provider == "mock":
         return 0.0
     rates = {
@@ -38,7 +39,10 @@ def _mock_cost(input_t: int, output_t: int, provider: str = "mock") -> float:
 
 
 class MockAgentResponse:
-    """Tek bir mock agent çalışmasının sonucu."""
+    """
+    Result of a single mock agent execution.
+    All fields labeled as mock/estimated — not real measurements.
+    """
 
     def __init__(
         self,
@@ -47,98 +51,151 @@ class MockAgentResponse:
         task_type: str = "general",
         success: bool = True,
     ):
-        self.content = content
-        self.agent_slug = agent_slug
-        self.task_type = task_type
-        self.success = success
-        self.provider = ModelProvider.MOCK
-        self.model = "mock-v1"
-        self.latency_ms = _mock_latency()
-        prompt_hint = f"{agent_slug} {task_type} {content[:50]}"
-        self.input_tokens, self.output_tokens = _mock_tokens(prompt_hint)
+        self.content     = content
+        self.agent_slug  = agent_slug
+        self.task_type   = task_type
+        self.success     = success
+        self.provider    = ModelProvider.MOCK
+        self.model       = "mock-v1"
+        self.is_mock     = True                  # Always True — never a real run
+        self.latency_ms  = _estimated_latency()  # Estimated, not measured
+        prompt_hint      = f"{agent_slug} {task_type} {content[:50]}"
+        self.input_tokens, self.output_tokens = _estimated_tokens(prompt_hint)
         self.cost_estimate = 0.0
-        self.started_at = datetime.now(timezone.utc)
-        self.completed_at = datetime.now(timezone.utc)
+        self.started_at    = datetime.now(timezone.utc)
+        self.completed_at  = datetime.now(timezone.utc)
         self.metadata: dict[str, Any] = {
-            "provider": "mock",
-            "simulated": True,
-            "part": "part-1-no-real-api",
+            "provider":      "mock",
+            "is_mock":       True,
+            "latency_note":  "estimated, not measured",
+            "tokens_note":   "approximation, not real API count",
         }
 
 
-# ── Prebuilt mock yanıtları (rol bazlı) ───────────────────────────────────────
+# ── Role-based mock responses ─────────────────────────────────────────────────
+# These are template outputs for dev/test. They do not represent real analysis.
 
 MOCK_RESPONSES: dict[str, list[str]] = {
     "orchestrator": [
-        "Tüm sistemler aktif. Görev dağılımı yapılıyor. Önce Ops Agent sistem kontrolü yapacak.",
-        "Görev tamamlandı. Tüm ajanlardan raporlar alındı. İnsan onayı gerekmiyor.",
-        "Kritik bir anomali tespit edilmedi. Pipeline normal seyrediyor.",
+        "Tüm sistemler kontrol edildi. Görev dağılımı tamamlandı.",
+        "Alt ajanlardan raporlar alındı. İnsan onayı gerektiren işlem tespit edilmedi.",
+        "Pipeline durumu normal. Kritik anomali yok.",
     ],
     "operations": [
-        "Backend, frontend ve database aktif görünüyor. Provider health kontrol ediliyor.",
-        "Mock provider %100 uptime. YouTube API ve Apify durumu bilinmiyor — key girilmemiş.",
-        "Sistem metrikleri normal sınırlar içinde. Kaynak kullanımı: %23 CPU, %41 RAM.",
+        "DB bağlantısı aktif. Mock provider %100 uptime.",
+        "Sistem metrikleri normal sınırlar içinde.",
+        "Servis durumu: Backend OK, DB OK, Mock Provider OK.",
     ],
     "product": [
-        "AI Agents Center için ilk MVP hazırlandıktan sonra QA kontrolü öneriyorum.",
-        "Kullanıcı deneyimi iyileştirmesi için dashboard'a agent aktivite özeti eklenebilir.",
-        "Part 2 önceliği: gerçek API provider entegrasyonu ve approval flow UI'ı.",
+        "Roadmap değerlendirmesi tamamlandı. Öncelikli özellikler belirlendi.",
+        "Kullanıcı geri bildirimleri analiz edildi. 3 yüksek öncelikli geliştirme önerildi.",
+        "MVP kapsamı netleştirildi. Sonraki sprint için görev listesi hazır.",
     ],
     "qa": [
-        "Mock run senaryosu başarıyla doğrulandı. Edge case'ler için ek test senaryoları öneriyorum.",
-        "Approval flow test edildi. Pending → Approved → Completed geçişi doğru çalışıyor.",
-        "Hata yönetimi test edildi. Timeout ve rate limit senaryoları Part 2'de kapsamlıdır.",
+        "Mevcut test kapsamı değerlendirildi. Kritik gap tespit edilmedi.",
+        "Mock run senaryosu doğrulandı. Edge case'ler kayıt altına alındı.",
+        "Approval flow testi tamamlandı. Geçişler doğru çalışıyor.",
     ],
     "legal": [
-        "Dış platformlarda otomatik işlem yapılmadığı için mevcut mock run güvenli.",
-        "Gerçek API entegrasyonunda veri saklama politikaları gözden geçirilmeli.",
-        "GDPR uyumluluğu: kullanıcı verisi üçüncü taraf AI'a gönderilmeden önce onay alınmalı.",
+        "Uyumluluk kontrolü tamamlandı. Kritik risk bulunamadı.",
+        "Veri saklama politikaları gözden geçirildi.",
+        "GDPR: kullanıcı verisi aktarımı öncesinde onay mekanizması yerinde.",
     ],
     "fraud": [
-        "Seçilen profilde %28 şüpheli takipçi oranı tespit edildi. Orta risk.",
-        "Bot aktivitesi sinyali: etkileşim deseni organik görünüyor. Fraud skoru: 22/100.",
-        "Analiz tamamlandı. Sahte takipçi riski düşük (%12). Güvenle devam edilebilir.",
+        "Profil analizi tamamlandı. Fraud skoru: 22/100 — düşük risk.",
+        "Bot aktivitesi sinyali yok. Etkileşim deseni organik görünüyor.",
+        "Analiz tamamlandı. Sahte takipçi oranı düşük.",
     ],
     "analysis": [
-        "Influencer analiz raporu hazırlandı. Final skor: 74/100 — Önerilir.",
-        "Engagement kalitesi güçlü. Yorum/beğeni oranı %7.2 — platform ortalamasının üstünde.",
-        "Veri güven skoru: orta. Audience demographics için platform API gerekiyor.",
+        "Influencer analiz raporu hazırlandı.",
+        "Engagement kalitesi değerlendirildi.",
+        "Veri yeterli değil — gerçek API verisi gerekiyor.",
     ],
     "brand_fit": [
-        "Marka-influencer uyumu güçlü. Brand fit skoru: 81/100.",
-        "Kategori uyumu: Moda × Yaşam Tarzı — yüksek uyum. Kampanya türü: Sponsored içerik önerilir.",
-        "Hedef kitle örtüşmesi %68. Test bütçesiyle başlanabilir.",
+        "Marka-influencer uyumu değerlendirildi.",
+        "Kategori uyumu analizi tamamlandı.",
+        "Hedef kitle örtüşmesi hesaplandı.",
     ],
     "roi": [
-        "Tahmini erişim: 180K. CPM: $4.20. Önerilen bütçe: $800-1200.",
-        "ROI potansiyeli yüksek (78/100). Yatırım geri dönüş süresi: 2-3 kampanya döngüsü.",
-        "Dönüşüm tahmini: 340 tıklama, ~9 satış. Mevcut e-ticaret conversion rate'e göre güncellenebilir.",
+        "ROI tahmin analizi tamamlandı.",
+        "CPM ve erişim metrikleri değerlendirildi.",
+        "Bütçe optimizasyonu önerisi hazırlandı.",
     ],
     "report": [
-        "Executive summary hazırlandı. PDF olarak dışa aktarılabilir.",
-        "Aylık performans raporu: 47 analiz, 23 düşük risk, 18 orta risk, 6 yüksek risk.",
-        "Rapor tamamlandı. Bir sonraki kontrol: 30 gün içinde izleme listesindeki profillerin güncellenmesi önerilir.",
+        "Rapor taslağı oluşturuldu.",
+        "Executive summary hazırlandı.",
+        "Aylık performans özeti tamamlandı.",
     ],
     "support": [
-        "3 açık destek talebi tespit edildi. 2'si fatura, 1'i teknik konu. Öncelik sırasına konuldu.",
-        "Yaygın sorun: API key yapılandırması. Otomatik yanıt şablonu hazırlandı.",
-        "Kullanıcı memnuniyeti skoru: 4.2/5. Son 7 gün ortalama yanıt süresi: 2.3 saat.",
+        "Açık destek talepleri incelendi.",
+        "Yaygın sorunlar tespit edildi ve kategorize edildi.",
+        "Yanıt şablonları güncellendi.",
     ],
     "finance": [
-        "Mevcut MRR tahmini güncellendi. Büyüme trendi pozitif.",
-        "API maliyet tahmini: aylık $12-18. Mevcut plan kapsamında sürdürülebilir.",
-        "Fiyatlandırma analizi: Pro plan → Business dönüşüm oranı %8.4. Upsell stratejisi önerilir.",
+        "Finansal özet hazırlandı.",
+        "API maliyet analizi tamamlandı.",
+        "Fiyatlandırma analizi: mevcut plan yapısı değerlendirildi.",
+    ],
+    "campaign": [
+        "Kampanya planı taslağı oluşturuldu.",
+        "Creator mix ve bütçe dağılımı önerildi.",
+        "Kampanya hedefleri ve KPI'lar tanımlandı.",
+    ],
+    "discovery": [
+        "Benzer creator önerileri hazırlandı.",
+        "İlgili hesaplar tespit edildi.",
+        "Discovery kriterleri uygulandı.",
+    ],
+    "seo": [
+        "SEO denetimi tamamlandı. İyileştirme önerileri hazırlandı.",
+        "Keyword cluster analizi yapıldı.",
+        "Teknik SEO checklist oluşturuldu.",
+    ],
+    "ads": [
+        "Reklam kopyaları oluşturuldu.",
+        "Hedef kitle segmentleri önerildi.",
+        "Kampanya ayarları için tavsiyeler hazırlandı.",
+    ],
+    "lead_finder": [
+        "ICP tanımı güncellendi.",
+        "Lead scoring kriterleri belirlendi.",
+        "Segment önceliklendirmesi tamamlandı.",
+    ],
+    "sales": [
+        "Satış mesajı taslağı oluşturuldu. Gönderim için onay gerekiyor.",
+        "Teklif taslağı hazırlandı.",
+        "Müşteri segmenti analizi tamamlandı.",
+    ],
+    "growth": [
+        "Büyüme stratejisi değerlendirmesi tamamlandı.",
+        "Growth kanalları analiz edildi.",
+        "Öncelikli büyüme metrikleri belirlendi.",
+    ],
+    "archive_ai": [
+        "Archive analizi tamamlandı.",
+        "Profil kategorilendirmesi yapıldı.",
+        "Trend tespiti tamamlandı.",
+    ],
+    "intel": [
+        "Rakip analizi özeti hazırlandı.",
+        "Fırsat tespiti tamamlandı.",
+        "Influencer gap analizi yapıldı.",
     ],
     "general": [
-        "Görev tamamlandı. Sonuçlar kaydedildi.",
-        "Analiz hazır. İncelemeniz için rapor oluşturuldu.",
-        "İşlem başarılı. Sistem bekleme moduna geçiyor.",
+        "Görev tamamlandı.",
+        "Analiz hazır.",
+        "İşlem başarılı.",
     ],
 }
 
 
-def mock_agent_response(agent_slug: str, agent_role: str, task_type: str = "general", prompt: str = "") -> MockAgentResponse:
-    """Rol ve görev tipine göre uygun mock yanıt döndür."""
+def mock_agent_response(
+    agent_slug: str,
+    agent_role: str,
+    task_type: str = "general",
+    prompt: str = "",
+) -> MockAgentResponse:
+    """Return a mock response labeled is_mock=True. Not a real agent execution."""
     role_responses = MOCK_RESPONSES.get(agent_role, MOCK_RESPONSES["general"])
     content = random.choice(role_responses)
     return MockAgentResponse(

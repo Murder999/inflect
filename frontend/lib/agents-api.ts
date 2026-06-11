@@ -61,6 +61,8 @@ export type AgentStatus =
   | "disabled"
   | "waiting_approval";
 
+export type AgentMode = "mock" | "active" | "disabled";
+
 export type AgentRole =
   | "orchestrator"
   | "product"
@@ -80,6 +82,13 @@ export type AgentRole =
   | "finance"
   | "legal"
   | "report"
+  | "security"
+  | "cto"
+  | "data_quality"
+  | "growth"
+  | "discovery"
+  | "intel"
+  | "archive_ai"
   | string;
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
@@ -108,11 +117,20 @@ export interface Agent {
   name: string;
   description: string | null;
   role: AgentRole;
+  department: string | null;
   status: AgentStatus;
+  mode: AgentMode;
   model_provider: string;
   model_name: string;
   risk_level: RiskLevel;
   is_enabled: boolean;
+  is_scheduled: boolean;
+  schedule_cron: string | null;
+  next_run_at: string | null;
+  autonomy_level: string;
+  health_status: string;
+  failure_count: number;
+  last_error: string | null;
   last_run_at: string | null;
   created_at: string;
   updated_at: string;
@@ -146,14 +164,32 @@ export interface AgentRun {
   provider: string;
   model: string;
   status: string;
+  is_mock: boolean;
+  mode_used: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   cost_estimate: number | null;
   latency_ms: number | null;
+  input_summary: string | null;
+  output_summary: string | null;
+  confidence: number | null;
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
   metadata: Record<string, any> | null;
+}
+
+export interface AgentEvent {
+  id: number;
+  event_type: string;
+  payload: Record<string, any> | null;
+  source: string;
+  status: string;
+  related_agent_id: number | null;
+  related_task_id: number | null;
+  created_at: string;
+  processed_at: string | null;
+  error_message: string | null;
 }
 
 export interface AgentConversation {
@@ -209,8 +245,10 @@ export interface AgentProviderHealth {
 export interface AgentOverview {
   agents_total: number;
   agents_enabled: number;
+  agents_scheduled: number;
   tasks_total: number;
   runs_total: number;
+  runs_mock: number;
   conversations_total: number;
   pending_approvals: number;
   system_status: string;
@@ -340,10 +378,15 @@ export function triggerMockAgentRun() {
     conversation_id: number;
     main_task_id: number;
     sub_task_ids: number[];
+    sub_task_count: number;
     message_count: number;
     run_id: number | null;
     agents_involved: string[];
     note: string;
+    mode: string;
+    is_mock: boolean;
+    risk_level: string;
+    approval_id: number | null;
   }>("/agents/mock-run", { method: "POST" });
 }
 
@@ -365,6 +408,42 @@ export async function runAgentTest(agentId: number) {
     run: runResult.run,
     error_message: runResult.run?.error_message ?? null,
   };
+}
+
+/** Admin: per-agent execution mode değiştir */
+export function updateAgentMode(agentId: number, mode: AgentMode) {
+  return agentRequest<{ success: boolean; mode: string; is_enabled: boolean; note: string }>(
+    `/agents/${agentId}/mode`,
+    { method: "PATCH", body: JSON.stringify({ mode }) }
+  );
+}
+
+/** Agent event bus: event listesi */
+export function getAgentEvents(params?: { event_type?: string; status?: string; limit?: number }) {
+  const q = new URLSearchParams();
+  if (params?.event_type) q.set("event_type", params.event_type);
+  if (params?.status) q.set("status", params.status);
+  if (params?.limit) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return agentRequest<{ events: AgentEvent[]; total: number }>(
+    `/agents/events${qs ? `?${qs}` : ""}`
+  );
+}
+
+/** Admin: event bus'a event yayınla */
+export function publishAgentEvent(event_type: string, payload?: Record<string, any>) {
+  return agentRequest<{ success: boolean; event: AgentEvent }>(
+    `/agents/events`,
+    { method: "POST", body: JSON.stringify({ event_type, payload: payload || {}, source: "admin" }) }
+  );
+}
+
+/** Admin: Scheduled job'ı manuel tetikle */
+export function triggerScheduledJob(agentSlug: string) {
+  return agentRequest<{ success: boolean; task_id: number; agent_slug: string; triggered_at: string }>(
+    `/agents/schedule/${agentSlug}/trigger`,
+    { method: "POST" }
+  );
 }
 
 /** Admin: Ajan provider ve model güncelle */
@@ -468,6 +547,24 @@ export const MSG_TYPE_LABEL: Record<string, string> = {
   approval_request: "Onay İsteği", decision: "Karar", log: "Log",
 };
 
+export const MODE_COLOR: Record<AgentMode, string> = {
+  mock:     "var(--amber)",
+  active:   "var(--green)",
+  disabled: "var(--text-3)",
+};
+
+export const MODE_LABEL: Record<AgentMode, string> = {
+  mock:     "MOCK",
+  active:   "ACTIVE",
+  disabled: "DISABLED",
+};
+
+export const MODE_DESC: Record<AgentMode, string> = {
+  mock:     "Simüle yanıtlar — gerçek API çağrısı yok",
+  active:   "Gerçek LLM sağlayıcılar — API key gerekli",
+  disabled: "Devre dışı — görev almaz",
+};
+
 export const ROLE_ICON: Record<string, string> = {
   orchestrator: "⬡", product: "◈", developer: "⌥", qa: "✓",
   operations: "◑", analysis: "◎", fraud: "!", audience: "◐",
@@ -475,6 +572,30 @@ export const ROLE_ICON: Record<string, string> = {
   ads: "◻", sales: "◈", support: "✉", finance: "₿", legal: "⚖", report: "≡",
   // Part 2
   archive_ai: "◉", intel: "◑", growth: "↑", discovery: "⊕", campaign: "✴",
+  // Part 11
+  security: "🛡", cto: "⚙", data_quality: "◫",
+};
+
+export const DEPT_LABEL: Record<string, string> = {
+  executive:   "Executive",
+  product:     "Product",
+  engineering: "Engineering",
+  analysis:    "Analysis",
+  campaign:    "Campaign",
+  growth:      "Growth",
+  archive:     "Archive",
+  intel:       "Intelligence",
+};
+
+export const DEPT_COLOR: Record<string, string> = {
+  executive:   "#8B5CF6",
+  product:     "var(--brand-600)",
+  engineering: "var(--green)",
+  analysis:    "var(--amber)",
+  campaign:    "#EC4899",
+  growth:      "#06B6D4",
+  archive:     "#F59E0B",
+  intel:       "#6366F1",
 };
 
 export function relativeTime(isoStr: string | null): string {

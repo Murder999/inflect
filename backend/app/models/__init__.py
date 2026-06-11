@@ -25,6 +25,27 @@ from app.models.influencer_archive import (
     InfluencerImportLog,
 )
 
+# ── Digital Twin (Part 12) ───────────────────────────────────────────────────
+from app.models.digital_twin import (
+    InfluencerDigitalTwin, TwinForecast, TwinSignal,
+    ConfidenceLevel, RiskTrend, StabilityTrend, CampaignReadiness,
+)
+
+# ── Competitor Intelligence (Part 13) ────────────────────────────────────────
+from app.models.competitor_intelligence import (
+    CompetitorProfile, CompetitorCampaignSignal, CompetitorReportCache,
+)
+
+# ── Risk Radar (Part 15) ──────────────────────────────────────────────────────
+from app.models.risk_radar import (
+    InfluencerRiskReport, RiskAlert,
+)
+
+# ── Intelligence Billing (Part 16) ───────────────────────────────────────────
+from app.models.intelligence_billing import (
+    IntelligenceFeature, IntelligenceUsageLog, UsageStatus,
+)
+
 __all__ = [
     "User", "PlanType",
     "Analysis", "Platform",
@@ -40,4 +61,9 @@ __all__ = [
     "ApprovalStatus", "ProviderHealthStatus",
     "InfluencerProfile", "InfluencerSnapshot", "SyncStatus",
     "InfluencerImportLog",
+    "InfluencerDigitalTwin", "TwinForecast", "TwinSignal",
+    "ConfidenceLevel", "RiskTrend", "StabilityTrend", "CampaignReadiness",
+    "CompetitorProfile", "CompetitorCampaignSignal", "CompetitorReportCache",
+    "InfluencerRiskReport", "RiskAlert",
+    "IntelligenceFeature", "IntelligenceUsageLog", "UsageStatus",
 ]

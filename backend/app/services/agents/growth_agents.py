@@ -287,7 +287,7 @@ class SalesAgent(BaseAgent):
                 f"Demo'yu gorustugumus icin tesekkurler. "
                 f"Fraud detection sorulariniz icin {plan_rec.capitalize()} planini oneriyorum.\n\n"
                 f"Bu plan: "
-                f"{{'starter': '50 analiz/ay, $29', 'pro': '200 analiz/ay, $79', 'business': '1000 analiz/ay, $199'}.get(plan_rec, 'Starter, $29')}\n\n"
+                f"{ {'starter': '50 analiz/ay, $29', 'pro': '200 analiz/ay, $79', 'business': '1000 analiz/ay, $199'}.get(plan_rec, 'Starter, $29') }\n\n"
                 f"Devam etmek ister misiniz?\n\nIyi calismalar"
             ),
         }

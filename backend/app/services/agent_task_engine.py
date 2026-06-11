@@ -108,6 +108,7 @@ async def run_task(session: AsyncSession, task_id: int) -> Optional[AgentRun]:
             agent_instance = AgentClass(agent_record=agent, db=session)
             result = await agent_instance.execute(task)
 
+            _is_mock = agent.model_provider.value == "mock"
             run = AgentRun(
                 agent_id=agent.id,
                 task_id=task.id,
@@ -120,7 +121,10 @@ async def run_task(session: AsyncSession, task_id: int) -> Optional[AgentRun]:
                 latency_ms=result.latency_ms,
                 started_at=datetime.now(timezone.utc),
                 completed_at=datetime.now(timezone.utc),
-                metadata_={"part": "part-3", "agent_role": agent.role, "is_mock": agent.model_provider.value == "mock"},
+                is_mock=_is_mock,
+                mode_used=agent.model_provider.value,
+                output_summary=str(result.summary)[:400] if result.summary else None,
+                metadata_={"agent_role": agent.role, "is_mock": _is_mock},
             )
             session.add(run)
 
@@ -155,6 +159,9 @@ async def run_task(session: AsyncSession, task_id: int) -> Optional[AgentRun]:
                 latency_ms=mock_resp.latency_ms,
                 started_at=datetime.now(timezone.utc),
                 completed_at=datetime.now(timezone.utc),
+                is_mock=True,
+                mode_used="mock",
+                output_summary=str(mock_resp.content)[:400] if mock_resp.content else None,
                 metadata_=mock_resp.metadata,
             )
             session.add(run)

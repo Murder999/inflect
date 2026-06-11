@@ -185,44 +185,45 @@ export default function SearchPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
           {/* Profile Header */}
-          <div className="card-raised" style={{ padding: 22, display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <ProfileAvatar src={p.avatar} profileImageUrl={p.profile_image_url} name={p.display_name || p.username} size={68} platform={p.platform} />
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                <h2 style={{ fontSize: 20, fontWeight: 500, margin: 0, color: "var(--text-1)" }}>{p.display_name}</h2>
-                <span className={`badge badge-${p.platform === "instagram" ? "ig" : p.platform === "youtube" ? "yt" : "tt"}`}>{p.platform_label}</span>
-                <span style={{ fontSize: 13, color: "var(--text-3)" }}>@{p.username}</span>
+          <div className="card-raised" style={{ padding: 24 }}>
+            <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <ProfileAvatar src={p.avatar} profileImageUrl={p.profile_image_url} name={p.display_name || p.username} size={80} platform={p.platform} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                  <h2 style={{ fontSize: 22, fontWeight: 600, margin: 0, color: "var(--text-1)", letterSpacing: "-0.02em" }}>{p.display_name}</h2>
+                  <span className={`badge badge-${p.platform === "instagram" ? "ig" : p.platform === "youtube" ? "yt" : "tt"}`}>{p.platform_label}</span>
+                </div>
+                <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 10 }}>@{p.username}</div>
+                {p.bio && <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 14px", lineHeight: 1.6 }}>{p.bio.slice(0, 200)}</p>}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[
+                    ["Takipçi",           fmt(p.followers)],
+                    ["Etkileşim",         `%${p.engagement_rate.toFixed(1)}`],
+                    ["Ort. Görüntülenme", fmt(p.avg_views)],
+                    ["Ort. Beğeni",       fmt(p.avg_likes)],
+                    ["Ort. Yorum",        fmt(p.avg_comments)],
+                    ["Kategori",          p.category || "—"],
+                    ["Ülke",              p.country  || "—"],
+                  ].map(([l, v]) => (
+                    <div key={l} style={{ padding: "6px 10px", background: "var(--bg-subtle)", borderRadius: 7, flexShrink: 0 }}>
+                      <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 2 }}>{l}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              {p.bio && <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 12px", lineHeight: 1.5 }}>{p.bio.slice(0, 200)}</p>}
-              <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-                {[
-                  ["Takipçi",  fmt(p.followers)],
-                  ["Etkileşim", `%${p.engagement_rate.toFixed(1)}`],
-                  ["Ort. Görüntülenme", fmt(p.avg_views)],
-                  ["Ort. Beğeni", fmt(p.avg_likes)],
-                  ["Ort. Yorum", fmt(p.avg_comments)],
-                  ["Kategori", p.category || "—"],
-                  ["Ülke", p.country || "—"],
-                ].map(([l, v]) => (
-                  <div key={l}>
-                    <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 2 }}>{l}</div>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-1)" }}>{v}</div>
-                  </div>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                <Ring s={s.final_score} size={80} />
+                <div style={{ fontSize: 12, fontWeight: 600, textAlign: "center",
+                  color: s.final_score >= 70 ? "var(--green)" : s.final_score >= 45 ? "var(--amber)" : "var(--red)" }}>
+                  {s.decision}
+                </div>
+                <button onClick={addToWatchlist} disabled={watchAdding || watchAdded} style={{
+                  padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer",
+                  background: watchAdded ? "var(--green-bg)" : "var(--bg-subtle)",
+                  color: watchAdded ? "var(--green)" : "var(--text-2)", border: "1px solid var(--line)",
+                }}>{watchAdded ? "✓ İzlemeye Alındı" : watchAdding ? "..." : "☆ İzlemeye Al"}</button>
               </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <Ring s={s.final_score} size={72} />
-              <div style={{ fontSize: 11, fontWeight: 500, textAlign: "center",
-                color: s.final_score >= 70 ? "var(--green)" : s.final_score >= 45 ? "var(--amber)" : "var(--red)" }}>
-                {s.decision}
-              </div>
-              {/* Watchlist button */}
-              <button onClick={addToWatchlist} disabled={watchAdding || watchAdded} style={{
-                marginTop: 4, padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer",
-                background: watchAdded ? "var(--green-bg)" : "var(--bg-subtle)",
-                color: watchAdded ? "var(--green)" : "var(--text-2)", border: "1px solid var(--line)",
-              }}>{watchAdded ? "✓ İzlemeye Alındı" : watchAdding ? "..." : "☆ İzlemeye Al"}</button>
             </div>
           </div>
 
@@ -234,13 +235,16 @@ export default function SearchPage() {
           </div>
 
           {/* Tabs */}
-          <div style={{ display: "flex", gap: 3, background: "var(--bg-subtle)", padding: 4, borderRadius: 10 }}>
+          <div style={{ display: "flex", gap: 3, background: "var(--bg-subtle)", padding: 4, borderRadius: 11 }}>
             {TABS.map(({ key, label }) => (
               <button key={key} onClick={() => setTab(key)} style={{
-                flex: 1, padding: "8px 4px", borderRadius: 7, fontSize: 12, fontWeight: tab === key ? 500 : 400,
+                flex: 1, padding: "9px 6px", borderRadius: 8, fontSize: 12,
+                fontWeight: tab === key ? 600 : 400,
                 background: tab === key ? "var(--bg-elevated)" : "transparent",
                 color: tab === key ? "var(--text-1)" : "var(--text-3)",
-                border: tab === key ? "1px solid var(--line)" : "none", cursor: "pointer",
+                border: tab === key ? "1px solid var(--line)" : "1px solid transparent",
+                boxShadow: tab === key ? "0 1px 4px rgba(0,0,0,0.10)" : "none",
+                cursor: "pointer", transition: "all 0.15s",
               }}>{label}</button>
             ))}
           </div>

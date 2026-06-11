@@ -89,6 +89,8 @@ export default function AdminArchivePage() {
 
   const [seeding,    setSeeding]    = useState(false);
   const [bulking,    setBulking]    = useState(false);
+  const [resolving,  setResolving]  = useState(false);
+  const [resolveMsg, setResolveMsg] = useState("");
 
   // JSON Import
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -172,6 +174,27 @@ export default function AdminArchivePage() {
     }
   }
 
+  // Resolve Avatars
+  async function handleResolveAvatars() {
+    setResolving(true); setResolveMsg("");
+    try {
+      const res = await archiveApi.resolveAvatars(50);
+      if (res.note) {
+        setResolveMsg(res.note);
+      } else {
+        setResolveMsg(
+          `Avatar resolve: ${res.resolved}/${res.processed} başarılı` +
+          (res.failed > 0 ? `, ${res.failed} başarısız (API key gerekli)` : "") + "."
+        );
+      }
+      load();
+    } catch (e: any) {
+      setResolveMsg(`Hata: ${e.message}`);
+    } finally {
+      setResolving(false);
+    }
+  }
+
   // Per-row sync
   async function handleRowSync(id: number) {
     setRowLoading((r) => ({ ...r, [id]: "sync" }));
@@ -226,24 +249,28 @@ export default function AdminArchivePage() {
   });
 
   return (
-    <div>
+    <div style={{ maxWidth: 1200 }}>
       {/* Header */}
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontSize: 11, color: "var(--text-3)" }}>Admin</span>
-          <span style={{ color: "var(--text-3)" }}>→</span>
-          <span style={{ fontSize: 11, color: "var(--brand-600)", fontWeight: 500 }}>Archive</span>
+          <span style={{ fontSize: 11, color: "var(--text-3)" }}>›</span>
+          <span style={{ fontSize: 11, color: "var(--brand-500)", fontWeight: 600 }}>Archive</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div>
-            <h1 style={{ fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 400, margin: "0 0 3px" }}>
-              Influencer Archive
+            <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.03em", color: "var(--text-1)" }}>
+              Influencer Database
             </h1>
-            <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
+            <p style={{ fontSize: 14, color: "var(--text-3)", margin: 0 }}>
               {total > 0 ? `${total} profil` : "Kayıt yok"} — gerçek analizlerden oluşturulur
             </p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleResolveAvatars} disabled={resolving}
+              style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: resolving ? "wait" : "pointer", background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)", opacity: resolving ? 0.7 : 1 }}>
+              {resolving ? "Resolving…" : "◉ Resolve Avatars"}
+            </button>
             <button onClick={handleBulkSync} disabled={bulking}
               style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: bulking ? "wait" : "pointer", background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)", opacity: bulking ? 0.7 : 1 }}>
               {bulking ? "Syncing…" : "⟳ Bulk Sync"}
@@ -268,6 +295,13 @@ export default function AdminArchivePage() {
             background: bulkMsg.startsWith("Hata") ? "var(--red-bg)" : "var(--green-bg)",
             color: bulkMsg.startsWith("Hata") ? "var(--red)" : "var(--green)" }}>
             {bulkMsg}
+          </div>
+        )}
+        {resolveMsg && (
+          <div style={{ marginTop: 8, padding: "7px 12px", borderRadius: 8, fontSize: 12,
+            background: resolveMsg.startsWith("Hata") ? "var(--red-bg)" : "var(--green-bg)",
+            color: resolveMsg.startsWith("Hata") ? "var(--red)" : "var(--green)" }}>
+            {resolveMsg}
           </div>
         )}
 
