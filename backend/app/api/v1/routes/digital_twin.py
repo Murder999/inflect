@@ -20,6 +20,7 @@ from app.models.digital_twin import (
     ConfidenceLevel, RiskTrend,
 )
 from app.services.digital_twin import twin_engine
+from app.services.entitlement_service import require_feature
 
 router = APIRouter(prefix="/digital-twin", tags=["Digital Twin"])
 
@@ -87,8 +88,9 @@ async def _check_profile_exists(db: AsyncSession, profile_id: int) -> Influencer
 @router.post("/generate/{profile_id}", summary="Influencer için Digital Twin oluştur")
 async def generate_twin(
     profile_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    db:   AsyncSession = Depends(get_db),
+    user: User         = Depends(get_current_user),
+    _ent: User         = Depends(require_feature("digital_twin_forecast")),
 ) -> dict[str, Any]:
     """
     Generate a new Digital Twin for the given influencer profile.
@@ -155,8 +157,9 @@ async def generate_twin(
 @router.get("/{profile_id}", summary="Mevcut Digital Twin'i getir")
 async def get_twin(
     profile_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    db:   AsyncSession = Depends(get_db),
+    user: User         = Depends(get_current_user),
+    _ent: User         = Depends(require_feature("digital_twin_forecast")),
 ) -> dict[str, Any]:
     """
     Get the latest Digital Twin for a profile.
@@ -180,8 +183,9 @@ async def get_twin(
 @router.post("/refresh/{profile_id}", summary="Digital Twin'i yenile")
 async def refresh_twin(
     profile_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    db:   AsyncSession = Depends(get_db),
+    user: User         = Depends(get_current_user),
+    _ent: User         = Depends(require_feature("digital_twin_forecast")),
 ) -> dict[str, Any]:
     """
     Regenerate the Digital Twin using the latest snapshot data.

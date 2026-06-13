@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
+from app.services.entitlement_service import require_feature
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,8 @@ async def lookup_competitors(
 async def generate_report(
     body: GenerateReportRequest,
     db:   AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User         = Depends(get_current_user),
+    _ent: User         = Depends(require_feature("competitor_intelligence")),
 ):
     """
     Generate a Competitor Intelligence report. Costs 1 credit.

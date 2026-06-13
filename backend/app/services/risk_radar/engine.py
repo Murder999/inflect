@@ -86,8 +86,10 @@ async def scan_influencer(
     # Persist
     await _cache_report(db, profile_id, window_days, is_mock, user_id, result)
 
-    # Alerts
-    await _check_and_create_alerts(db, profile_id, result)
+    # Alerts (with dedup; source=manual_scan for API-triggered scans)
+    await _check_and_create_alerts(
+        db, profile_id, result, source="manual_scan"
+    )
 
     # Events
     await _fire_events(db, profile, result)
@@ -236,32 +238,62 @@ async def _cache_report(
 
 
 async def _check_and_create_alerts(
-    db:         AsyncSession,
-    profile_id: int,
-    result:     RiskReportResult,
-) -> None:
-    """Create RiskAlert if thresholds exceeded."""
+    db:             AsyncSession,
+    profile_id:     int,
+    result:         RiskReportResult,
+    previous_score: Optional[int] = None,
+    source:         str = "manual_scan",
+) -> tuple[int, int]:
+    """
+    Create or update RiskAlert if risk level is high/critical.
+
+    Returns (alerts_created, alerts_updated).
+    Dedup: existing open alert with same (profile_id, alert_type) is updated,
+    not duplicated.
+    """
+    from app.services.risk_alert_service import create_or_update_alert
+    from app.models.risk_radar import AlertSource
+
+    alerts_created = 0
+    alerts_updated = 0
+
+    if result.overall_level not in ("high", "critical"):
+        return alerts_created, alerts_updated
+
     try:
-        if result.overall_level in ("high", "critical"):
-            alert = RiskAlert(
-                profile_id=profile_id,
-                alert_type="risk_threshold",
-                severity=result.overall_level,
-                message=(
-                    f"Risk skoru {result.overall_score}/100 ({result.overall_level.upper()}) — "
-                    f"trajectory: {result.risk_trajectory}"
-                ),
-                details={
-                    "overall_score":  result.overall_score,
-                    "overall_level":  result.overall_level,
-                    "trajectory":     result.risk_trajectory,
-                    "is_mock":        result.is_mock,
-                },
-            )
-            db.add(alert)
-            await db.commit()
-    except Exception:
+        alert, created = await create_or_update_alert(
+            db=db,
+            profile_id=profile_id,
+            alert_type="risk_threshold",
+            severity=result.overall_level,
+            message=(
+                f"Risk skoru {result.overall_score}/100 ({result.overall_level.upper()}) — "
+                f"trajectory: {result.risk_trajectory}"
+            ),
+            source=source,
+            platform=result.platform,
+            previous_score=float(previous_score) if previous_score is not None else None,
+            current_score=float(result.overall_score),
+            explanation=result.evidence_summary[0] if result.evidence_summary else None,
+            evidence=result.evidence_summary[:5] if result.evidence_summary else None,
+            details={
+                "overall_score": result.overall_score,
+                "overall_level": result.overall_level,
+                "trajectory":    result.risk_trajectory,
+                "confidence":    result.confidence,
+                "is_mock":       result.is_mock,
+            },
+        )
+        await db.commit()
+        if created:
+            alerts_created += 1
+        else:
+            alerts_updated += 1
+    except Exception as exc:
+        logger.error("_check_and_create_alerts error: %s", exc, exc_info=True)
         await db.rollback()
+
+    return alerts_created, alerts_updated
 
 
 async def _fire_events(

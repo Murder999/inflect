@@ -9,8 +9,12 @@ import {
   BarChart2, Bell, Users, Settings, Shield, Database, Cpu,
   LogOut, ChevronRight, MessageSquare, CheckCircle, ListTodo,
   Server, TrendingUp, Bot, GitBranch, Activity, Menu, X,
-  Brain, Dna, Swords, ShieldAlert,
+  Brain, Dna, Swords, ShieldAlert, AlertOctagon, Lock,
 } from "lucide-react";
+
+const PLAN_ORDER: Record<string, number> = {
+  free: 0, starter: 1, pro: 2, business: 2, agency: 3, enterprise: 4,
+};
 
 const NAV_MAIN = [
   { href: "/dashboard",  Icon: LayoutDashboard, label: "Dashboard" },
@@ -22,11 +26,11 @@ const NAV_MAIN = [
   { href: "/reports",    Icon: BarChart2,       label: "Raporlar" },
 ];
 const NAV_INTELLIGENCE = [
-  { href: "/campaigns/simulate",                       Icon: Zap,    label: "Campaign Intelligence" },
-  { href: "/intelligence/brand-match",                 Icon: Brain,  label: "AI Brand Match™",          badge: "NEW" },
-  { href: "/intelligence/digital-twin",                Icon: Dna,    label: "Digital Twin™",            badge: "NEW" },
-  { href: "/intelligence/competitor-intelligence",     Icon: Swords,      label: "Competitor Intel™",  badge: "NEW" },
-  { href: "/intelligence/risk-radar",                 Icon: ShieldAlert, label: "Risk Radar™",          badge: "NEW" },
+  { href: "/campaigns/simulate",                       Icon: Zap,        label: "Campaign Intelligence", minPlan: "starter"  },
+  { href: "/intelligence/brand-match",                 Icon: Brain,      label: "AI Brand Match™",       minPlan: "free"     },
+  { href: "/intelligence/digital-twin",                Icon: Dna,        label: "Digital Twin™",         minPlan: "agency"   },
+  { href: "/intelligence/competitor-intelligence",     Icon: Swords,     label: "Competitor Intel™",     minPlan: "agency"   },
+  { href: "/intelligence/risk-radar",                 Icon: ShieldAlert, label: "Risk Radar™",           minPlan: "pro"      },
 ];
 
 const NAV_ACCOUNT = [
@@ -47,6 +51,7 @@ const NAV_AGENTS = [
 
 const PLAN_LABEL: Record<string, string> = {
   free: "Ücretsiz", starter: "Starter", pro: "Pro", business: "Business",
+  agency: "Agency", enterprise: "Enterprise",
 };
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -57,6 +62,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [criticalAlert, setCriticalAlert] = useState(false);
   const [sidebarOpen,   setSidebarOpen]   = useState(true);
   const [mobileOpen,    setMobileOpen]    = useState(false);
+  const [searchQuery,   setSearchQuery]   = useState("");
 
   useEffect(() => {
     authApi.me().then(setUser).catch(() => {});
@@ -76,8 +82,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const creditsLow  = user ? user.credits_remaining <= 2 : false;
 
   function NavLink({
-    href, Icon, label, badge, indent = false, intelligenceBadge,
-  }: { href: string; Icon: React.FC<{size?: number; strokeWidth?: number}>; label: string; badge?: number; indent?: boolean; intelligenceBadge?: string }) {
+    href, Icon, label, badge, indent = false, intelligenceBadge, minPlan,
+  }: { href: string; Icon: React.FC<{size?: number; strokeWidth?: number}>; label: string; badge?: number; indent?: boolean; intelligenceBadge?: string; minPlan?: string }) {
+    const userPlanOrder = PLAN_ORDER[user?.plan ?? "free"] ?? 0;
+    const reqPlanOrder  = PLAN_ORDER[minPlan ?? "free"] ?? 0;
+    const isLocked      = minPlan && reqPlanOrder > userPlanOrder && !user?.is_admin;
     const exactPaths = ["/admin", "/admin/agents", "/admin/archive"];
     const isExact = exactPaths.includes(href);
     const active  = isExact ? pathname === href : pathname.startsWith(href);
@@ -114,7 +123,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {sidebarOpen && (
           <>
             <span style={{ flex: 1 }}>{label}</span>
-            {intelligenceBadge ? (
+            {isLocked ? (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 3,
+                fontSize: 9, fontWeight: 800,
+                background: "rgba(99,102,241,0.10)", border: "1px solid rgba(99,102,241,0.2)",
+                color: "#6366F1", borderRadius: 99, padding: "1px 6px",
+                letterSpacing: "0.04em",
+              }}>
+                <Lock size={8} />
+                {(PLAN_LABEL[minPlan ?? "pro"] ?? minPlan ?? "Pro").toUpperCase()}
+              </span>
+            ) : intelligenceBadge ? (
               <span style={{ fontSize: 9, fontWeight: 800, background: "linear-gradient(135deg,var(--green),#6366F1)", color: "#fff", borderRadius: 99, padding: "1px 6px", letterSpacing: "0.04em" }}>
                 {intelligenceBadge}
               </span>
@@ -170,15 +190,47 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Global search */}
-        <div style={{
-          flex: 1, maxWidth: 480, display: "flex", alignItems: "center", gap: 10,
-          background: "var(--bg-subtle)", borderRadius: 9, padding: "0 14px", height: 36,
-          border: "1px solid var(--line)", cursor: "text",
-        }}>
-          <Search size={14} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "var(--text-3)", flex: 1 }}>Influencer ara...</span>
-          <span style={{ fontSize: 11, color: "var(--text-3)", background: "var(--bg-muted)", padding: "2px 6px", borderRadius: 5, fontFamily: "var(--font-mono)" }}>⌘K</span>
-        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = searchQuery.trim();
+            if (q) router.push(`/search?q=${encodeURIComponent(q)}`);
+          }}
+          style={{ flex: 1, maxWidth: 480 }}
+        >
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            background: "var(--bg-subtle)", borderRadius: 9, padding: "0 14px", height: 36,
+            border: "1px solid var(--line)",
+          }}>
+            <Search size={14} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Influencer ara... (Enter ile git)"
+              style={{
+                flex: 1, border: "none", background: "transparent", fontSize: 13,
+                color: "var(--text-1)", outline: "none",
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const q = searchQuery.trim();
+                  if (q) router.push(`/search?q=${encodeURIComponent(q)}`);
+                }
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", padding: 0, display: "flex" }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </form>
 
         {/* Right side */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
@@ -261,7 +313,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", padding: "0 4px", marginBottom: 4, textTransform: "uppercase", background: "linear-gradient(90deg,var(--green),#6366F1)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Intelligence</div>
             )}
             {NAV_INTELLIGENCE.map((item) => (
-              <NavLink key={item.href} href={item.href} Icon={item.Icon} label={item.label} intelligenceBadge={"badge" in item ? (item as any).badge : undefined} />
+              <NavLink key={item.href} href={item.href} Icon={item.Icon} label={item.label} minPlan={item.minPlan} />
             ))}
 
             <div style={{ margin: "10px 6px 8px", height: 1, background: "var(--line)" }} />
@@ -280,9 +332,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <>
                 <div style={{ margin: "10px 6px 8px", height: 1, background: "var(--line)" }} />
                 {sidebarOpen && <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", color: "var(--text-3)", padding: "0 4px", marginBottom: 4, textTransform: "uppercase" }}>Yönetim</div>}
-                <NavLink href="/admin"                  Icon={Shield}     label="Admin Panel" />
-                <NavLink href="/admin/archive"         Icon={Database}   label="Archive" />
-                <NavLink href="/admin/intelligence"    Icon={Zap}        label="Intelligence Billing" />
+                <NavLink href="/admin"                  Icon={Shield}       label="Admin Panel" />
+                <NavLink href="/admin/archive"         Icon={Database}     label="Archive" />
+                <NavLink href="/admin/intelligence"    Icon={Zap}          label="Intelligence Billing" />
+                <NavLink href="/admin/risk-alerts"     Icon={AlertOctagon} label="Risk Alertler" />
                 {NAV_AGENTS.map((item) => (
                   <NavLink key={item.href} href={item.href} Icon={item.Icon} label={item.label} indent={item.indent} />
                 ))}

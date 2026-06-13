@@ -1,3 +1,430 @@
+# README_PROGRESS — Part 22 Post-Audit: Taxonomy Leak Removal & Creator Pool Safe Reporting (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.4
+
+## Bu Session'da Yapılan Değişiklikler
+
+Karaca canlı testi sonrası tespit edilen 5 veri sızıntısı giderildi. Backend'e section readiness alanları eklendi.
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `frontend/lib/brand-match-engine.ts` | `buildSummary()`: creator havuzu < 20 iken ortalama skor gösterilmiyor; `buildNextActions()`: creator referanslı adımlar pool < 20 iken filtreleniyor |
+| `frontend/app/(app)/intelligence/brand-match/page.tsx` | DNA Boyutları: `"Taxonomy Fallback"` dimensionlar skor göstermiyor, dimmed placeholder; Rapor header Creator badge: `partial_no_creators` → "Yetersiz Havuz"; "AI İçgörüleri" → "Marka İçgörüleri" (aiUsed = false iken) |
+| `backend/app/api/v1/routes/brand_match.py` | `BrandMatchAnalyzeResponse`'a `brand_dna_ready`, `ai_enrichment_ready`, `min_creator_pool` eklendi; `_MIN_CREATOR_POOL = 20` sabit |
+| `frontend/lib/api.ts` | `BrandMatchAnalyzeResponse`'a `brand_dna_ready`, `ai_enrichment_ready`, `min_creator_pool` eklendi |
+| `backend/tests/test_brand_analysis.py` | `TestSectionReadiness` class: 9 yeni test (toplam 44 test) |
+
+## NEVER Kuralları Güncellendi
+
+- NEVER show `"Taxonomy Fallback"` dimension cards as verified scores in DNA section
+- NEVER show average creator match score when pool < `MIN_CREATOR_POOL` (20)
+- NEVER show creator-referencing next steps when pool < `MIN_CREATOR_POOL`
+- NEVER show `"AI İçgörüleri"` title when `websiteEvidence.aiUsed === false`
+- NEVER use frontend-only hiding — backend must return `brand_dna_ready`, `ai_enrichment_ready`, `min_creator_pool`
+
+## Doğrulama
+
+```
+backend/tests/test_brand_analysis.py   → 44/44 PASSED ✓
+npm run typecheck                      → 0 hata ✓
+npm run build                          → 38/38 sayfa ✓
+```
+
+---
+
+# README_PROGRESS — Part 22: AI Brand Match Backend Real Data Extraction & Verified Report Engine (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.4
+
+AI Brand Match modülü backend-gated, production-grade seviyeye yükseltildi.
+Domain çözümü, web evidence çekimi ve evidence persistence artık FastAPI backend'de çalışıyor.
+Frontend, yalnızca backend'in `verified_report: true` döndürdüğü durumlarda local engine'i çalıştırıyor.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/services/brand_domain_resolver.py` | **YENİ:** TLD probing (httpx HEAD/GET), URL→domain normalization, RESOLVER_RESOLVED / RESOLVER_DOMAIN_UNRESOLVED / RESOLVER_AMBIGUOUS, TLD preference (.com > .com.tr), concurrent asyncio.gather |
+| `backend/app/services/brand_website_fetcher.py` | **YENİ:** httpx async GET, 8s timeout, 1MB cap, title/meta/OG/h1/h2/bodySnippets/socialLinks/language/keywordHints extraction, evidence_quality (strong/moderate/weak/none) |
+| `backend/app/models/brand_analysis.py` | **YENİ:** `BrandAnalysisSnapshot` SQLAlchemy model — input, resolution, fetch, evidence, report_status, redaction_level |
+| `backend/app/api/v1/routes/brand_match.py` | **YENİ:** `POST /api/v1/intelligence/brand-match/analyze` — auth required, domain resolve→website fetch→DB persist→locked_sections→response |
+| `backend/alembic/versions/0006_part22_brand_ai.py` | **YENİ:** `brand_analysis_snapshots` tablosu (revision: `0006_part22_brand_ai`, 18 chars ≤ 32 ✓) |
+| `backend/app/models/__init__.py` | `BrandAnalysisSnapshot` import eklendi |
+| `backend/app/main.py` | `brand_match` router kaydedildi, version 10.4.0 |
+| `backend/app/api/v1/routes/admin_intelligence.py` | `_EXPECTED_HEAD` → `0006_part22_brand_ai` |
+| `backend/app/services/entitlement_service.py` | `advanced_brand_match` feature key eklendi (Pro+), PRO_FEATURES güncellendi |
+| `backend/tests/test_migration_health.py` | `test_expected_head_is_part22` güncellendi |
+| `backend/tests/test_brand_analysis.py` | **YENİ:** 35 pytest testi — resolver (7), HTML extraction (8), evidence quality (4), fetch failures (3), plan redaction (8), no-report guards (5) |
+| `frontend/lib/api.ts` | `BrandMatchEvidenceResponse`, `BrandMatchAnalyzeRequest`, `BrandMatchAnalyzeResponse`, `brandMatchApi.analyze()` eklendi |
+| `frontend/app/(app)/intelligence/brand-match/page.tsx` | Backend API entegrasyonu: `brandMatchApi.analyze()` çağrısı, `domain_unresolved` PageState + UI, backend evidence mapping, `backendResponse` + `lockedSections` state, loading steps güncellendi, input placeholder genişletildi (brand adı kabul eder) |
+
+## Domain Resolver Davranışı
+
+| Input | Örnek | Davranış |
+|-------|-------|----------|
+| Full URL | `https://karaca.com.tr` | Normalize → resolved (high confidence) |
+| Domain | `karaca.com.tr` | https:// ekle → resolved (high confidence) |
+| Bare name | `karaca` | TLD probe: .com/.com.tr/.net/.io/.co/.org concurrent → resolved veya domain_unresolved |
+| Unresolvable | `xyzfakebrand123` | domain_unresolved → rapor yok |
+
+## Backend No-Fallback Kuralları
+
+- `resolver_status !== "resolved"` → `verified_report: false`, `domain_unresolved` state
+- `fetch_status !== "success"` → `verified_report: false`, `fetch_failed` state
+- `evidence_quality === "none"` → `verified_report: false`, `insufficient_web_evidence` state
+- Taxonomy fallback / known brand profile / mock data hiçbir zaman kullanılmaz
+- Frontend engine yalnızca `verified_report: true` olduğunda çalışır
+
+## Plan Redaction (locked_sections)
+
+| Plan | Kilitli Bölümler |
+|------|-----------------|
+| Free | creator_matches, portfolio, insights, export |
+| Starter | portfolio, export |
+| Pro | export |
+| Agency/Enterprise | — |
+
+## Doğrulama
+
+```
+backend/tests/test_brand_analysis.py   → 35/35 PASSED ✓
+backend/tests/test_migration_health.py → 7/7 PASSED ✓
+npm run typecheck                      → 0 hata ✓
+npm run build                          → 38/38 sayfa ✓
+```
+
+---
+
+# README_PROGRESS — Part 21: AI Brand Match No-Fallback Guard & Production-Grade Report Controls (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.3
+
+AI Brand Match modülü üretim kalitesine yükseltildi. Taxonomy fallback artık "doğrulanmış rapor" olarak sunulmuyor; web sitesi verisi çekilemeyen markalarda analiz tamamen durdurularak kullanıcıya net hata ve yeniden deneme ekranı gösteriliyor.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `frontend/lib/brand-match-engine.ts` | `MIN_CREATOR_POOL = 20` sabiti, `BrandMatchReportStatus` tipi (`verified` / `partial_no_creators` / `insufficient_web_evidence` / `taxonomy_only`), `BrandMatchResult.reportStatus` + `.verifiedReport` alanları, ülke uyumsuzluğu creator'ları `isMismatch = true` olarak işaretleniyor (3% ağırlık yerine tam dışlama) |
+| `frontend/app/(app)/intelligence/brand-match/page.tsx` | `looksLikeDomain()` helper (TLD yoksa input reddi), `PageState` genişletildi (`"fetch_failed"` eklendi), `failedEvidence` state değişkeni, `runAnalysis()` korumaları (TLD kontrolü + fetch başarısız kontrolü), `fetch_failed` tam UI ekranı (hata detayı, yeniden deneme formu, "sahte veri üretilmedi" banner), rapor başlığı badge'i `reportStatus` bağlı, Top Creator Matches bölümü `partial_no_creators` durumunda yetersiz havuz uyarısıyla değiştirildi, Portfolio+Overlap+Mismatch bölümleri `verifiedReport` bayrağıyla koşullu |
+
+## Doğrulama
+
+```
+npm run typecheck  → 0 hata ✓
+npm run build      → 38/38 sayfa ✓ (8.3s)
+```
+
+## Kurallar (Kalıcı)
+
+- Taxonomy fallback asla "doğrulanmış rapor" olarak sunulmaz
+- `fetchStatus !== "success"` → rapor bloklanır, `fetch_failed` durumuna geçilir
+- Top Creator Matches tablosu minimum `MIN_CREATOR_POOL = 20` creator olmadan gösterilmez
+- `targetMarket !== "Global"` ve creator ülkesi eşleşmiyorsa → `isMismatch = true` (önerilmez)
+- Revenue/ROAS/Conversion tahminleri hiçbir zaman üretilmez
+
+---
+
+# README_PROGRESS — Alembic Revision ID Fix + Migration Chain Repair (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+
+## Sorun
+
+`alembic upgrade head` sırasında 0003 migration'ına geçişte şu hata alınıyordu:
+```
+value too long for type character varying(32)
+```
+
+`alembic_version.version_num` kolonu VARCHAR(32)'dir. 0003–0005 revision ID'leri bu sınırı aşıyordu.
+
+## Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `alembic/versions/0003_part18_agency_enterprise_plans.py` | `revision` → `0003_part18_plans` (35→17 karakter) |
+| `alembic/versions/0004_part19_campaign_simulation_result.py` | `revision` → `0004_part19_campaign_sim` (38→24 karakter); `down_revision` güncellendi |
+| `alembic/versions/0005_part20_campaign_report_metadata.py` | `revision` → `0005_part20_campaign_meta` (36→25 karakter); `down_revision` güncellendi |
+| `app/api/v1/routes/admin_intelligence.py` | `_EXPECTED_HEAD` → `0005_part20_campaign_meta` |
+| `tests/test_migration_health.py` | assertion güncellendi: `0005_part20_campaign_meta` |
+| `requirements-dev.txt` | **YENİ:** pytest + pytest-asyncio (production image dışında) |
+
+## Doğrulama
+
+```
+alembic heads     → 0005_part20_campaign_meta (head) ✓
+alembic current   → 0005_part20_campaign_meta (head) ✓
+alembic upgrade head → 0002→0003→0004→0005 hatasız ✓
+pytest tests/test_campaign_intelligence.py -v → 28/28 PASSED ✓
+pytest tests/test_migration_health.py -v      → 7/7 PASSED ✓
+```
+
+## Kural: Yeni Migration Revision ID
+
+Gelecekte yeni revision oluştururken `--rev-id` ile 32 karakter altında ID kullan:
+```bash
+alembic revision --autogenerate -m "açıklama" --rev-id "0006_part21_kısa"
+```
+
+---
+
+# README_PROGRESS — Part 20: Campaign Intelligence Provider-Backed Discovery & Entitlement-Safe Report Engine (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.2
+
+Campaign Intelligence, frontend-only arşiv fallback simülasyonundan backend provider-doğrulamalı discovery motoruna ve server-side entitlement-safe rapor redaction sistemine dönüştürüldü. TypeScript `tsc --noEmit` sıfır hatayla geçiyor.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/services/campaign_discovery_service.py` | **YENİ:** `_compute_completeness()` (7 kritik alan, 0-100%), `_completeness_level()` (excluded/low_confidence/normal), `_optimize_budget()` (güven ağırlıklı, %15 low-conf cap), `discover_campaign_creators()` (insufficient_verified_data → arşiv fallback YOK) |
+| `backend/app/models/campaign.py` | 6 yeni kolon: `report_source`, `data_confidence`, `provider_status`, `discovery_sources`, `report_generated_at`, `redaction_level` |
+| `backend/app/api/v1/routes/campaigns.py` | `_determine_redaction()` (free→full, starter→basic, pro→pro, agency→none), server-side `_to_dict()` redaction, `POST /campaigns/discover`, `locked_sections` metadata |
+| `backend/alembic/versions/0005_part20_campaign_report_metadata.py` | **YENİ:** 6 kolon migration + `client_simulation_preview` backfill |
+| `frontend/lib/simulation-engine.ts` | `DataCompletenessLevel`, eşikler (60/75/0.15), `qualityScore: number \| null`, `excludedFromPortfolio`, `reportSource`, default 49/50 kaldırıldı |
+| `frontend/lib/api.ts` | `CampaignReportSource`, `LockedSection`, `Campaign` 7 yeni alan, `CampaignDiscoverRequest`, `CampaignDiscoveryResponse`, `campaignsApi.discover()` |
+| `frontend/app/(app)/campaigns/simulate/page.tsx` | `reportSource` badge, completeness banner'ları, `~EST`→`completenessLabel`, null qualityScore render, rapor metadata kayıt |
+| `frontend/app/(app)/campaigns/[id]/page.tsx` | `PremiumLockedBanner`, `report_source` + `redaction_level` badge'leri, completeness uyarıları, null qualityScore render |
+| `backend/tests/test_campaign_intelligence.py` | **YENİ:** 28 pytest testi — completeness gate, budget cap, tüm redaction seviyeleri |
+
+## Giderilen Sorunlar
+
+| Sorun | Çözüm |
+|-------|-------|
+| Default 49/50 kalite skoru | `qualityScore: number \| null` — yetersiz veri → null, bütçe weight=0 |
+| Free kullanıcı tam rapor alıyor | Server-side redaction — frontend blur tek güvenlik değil |
+| Arşiv profilleri portföye dolduruluyor | DataCompleteness %60 altı → excluded, `insufficient_verified_data` |
+| Low-confidence bütçe eşit dağılım | `BUDGET_CAP_LOW_CONF=0.15` — %60-75 tamamlama → max %15 bütçe |
+| `~EST` badge yanıltıcı | `completenessLabel` → "Düşük Güven" / "Veri Eksik" |
+
+## TypeScript / Build
+
+```
+npx tsc --noEmit → 0 hata ✓
+```
+
+---
+
+# README_PROGRESS — Part 19: Campaign Intelligence Real Data Hardening (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.1
+
+Campaign Intelligence sistemindeki 8 kritik sorun giderildi. 404 "Kampanyayı Gör" hatası çözüldü, simulation sonuçları DB'ye kalıcı olarak kaydediliyor, kalite skoru 49 problemi için veri tamamlanma sistemi eklendi, veri şeffaflığı banner'ları eklendi. TypeScript `tsc --noEmit` sıfır hatayla geçiyor. `npm run build` başarılı.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `frontend/app/(app)/campaigns/[id]/page.tsx` | **YENİ:** Campaign detail sayfası — `GET /api/v1/campaigns/{id}` ile yükle, `simulation_result` varsa tam rapor render et, yoksa temel kampanya görünümü göster. 404 "Kampanyayı Gör" hatası çözüldü. |
+| `frontend/lib/api.ts` | `DiscoveryCard.source?: string` alanı eklendi (typecheck fix). `Campaign.simulation_result` ve `CampaignCreateBody.simulation_result` alanları eklendi. |
+| `frontend/lib/simulation-engine.ts` | `DataCompleteness` tipi, `EnrichedCreator.dataCompleteness/dataCompletenessFields/sourceLabel` alanları eklendi. `computeCreatorQualityScore()` completeness döndürecek şekilde güncellendi. `buildDataSourceNotes()` arşiv/minimal sayılarını raporluyor. |
+| `frontend/app/(app)/campaigns/simulate/page.tsx` | `saveAsCampaign()` tam `simulation_result` JSON'ı gönderecek şekilde güncellendi. Veri kalitesi uyarı banner'ları eklendi. `~EST` badge kalite skoru düşük güvenilirlikte gösteriliyor. |
+| `backend/app/models/campaign.py` | `simulation_result: Mapped[Optional[dict]]` JSON kolonu eklendi. |
+| `backend/app/api/v1/routes/campaigns.py` | `CampaignCreateRequest.simulation_result` alanı eklendi. `_to_dict()` `simulation_result` içeriyor. `_sanitize_sim_result()` helper eklendi. Kampanya oluşturma simulation_result'ı DB'ye kaydediyor. |
+| `backend/alembic/versions/0004_part19_campaign_simulation_result.py` | **YENİ:** `campaigns.simulation_result` JSON kolonu + partial index migrasyonu. |
+
+## Giderilen Sorunlar
+
+| Sorun | Kök Neden | Çözüm |
+|-------|-----------|-------|
+| "Kampanyayı Gör" → 404 | `/campaigns/[id]/page.tsx` yoktu | Tam premium campaign detail sayfası oluşturuldu |
+| Kalite skoru herkese 49 | Arşiv profilleri tüm alanları 0/null → tüm default'lar → tam 49 | `DataCompleteness` sistemi + `~EST` badge + şeffaflık banner |
+| Bütçe eşit dağıtım | Tüm kalite skorları 49 (eşit) → power-law weight eşit → eşit bütçe | Score varyasyonu arttıkça otomatik düzelir |
+| Simulation sonucu kaybolur | Kampanya kaydedince `simulation_result` gönderilmiyordu | `saveAsCampaign()` tam JSON gönderir, backend DB'ye kaydeder |
+| Ülke/kategori boş | Arşiv profillerinde bu alanlar dolu değil | Şeffaflık banner'ı eklendi, `~EST` badge gösteriliyor |
+
+## TypeScript / Build
+
+```
+npx tsc --noEmit → 0 hata ✓
+npx next build   → başarılı ✓  (/campaigns/[id] → dynamic route ƒ)
+```
+
+---
+
+# README_PROGRESS — Part 18: Premium Entitlement & Conversion UX System (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.0
+
+Plan bazlı özellik kilitleme sistemi (entitlement), 5 paket fiyat sayfası, premium UI bileşenler ve intelligence sayfaları entegrasyonu tamamlandı. TypeScript `tsc --noEmit` sıfır hatayla geçiyor. `npm run build` başarılı.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/models/user.py` | `PlanType` enum'a `AGENCY` ve `ENTERPRISE` eklendi |
+| `backend/app/services/entitlement_service.py` | **YENİ:** Merkezi entitlement servisi (26 feature key, plan-bazlı kontrol, DB-backed + hardcoded fallback, `require_feature()` FastAPI dependency) |
+| `backend/app/api/v1/routes/entitlements.py` | **YENİ:** `/pricing/plans`, `/entitlements/me`, `/entitlements/feature/{key}`, `/events/premium`, `/admin/plans/*` endpoint'leri |
+| `backend/app/api/v1/routes/digital_twin.py` | `require_feature("digital_twin_forecast")` dependency eklendi |
+| `backend/app/api/v1/routes/competitor_intelligence.py` | `require_feature("competitor_intelligence")` dependency eklendi |
+| `backend/app/api/v1/routes/risk_radar.py` | Evidence redaction: `advanced_risk_radar` kilitlendiyse anomaly_events + signals gizlenir |
+| `backend/app/main.py` | Entitlements router eklendi, 6 paket seed (free/starter/pro/agency/enterprise/business-legacy), version v10.0 |
+| `backend/alembic/versions/0003_part18_agency_enterprise_plans.py` | `ALTER TYPE plantype ADD VALUE IF NOT EXISTS 'agency'/'enterprise'` |
+| `backend/tests/test_entitlement_service.py` | **YENİ:** 20 pytest-asyncio testi |
+| `frontend/lib/api.ts` | `FeatureLockedDetail` interface, `FeatureLockedError` class, `isFeatureLockedError()` type guard, 403 handler güncellendi |
+| `frontend/lib/entitlements-api.ts` | **YENİ:** `entitlementsApi`, `FeatureKey`/`PlanSlug` tipleri, plan helpers |
+| `frontend/components/premium/PlanBadge.tsx` | **YENİ:** Plan rozet bileşeni |
+| `frontend/components/premium/UpgradeModal.tsx` | **YENİ:** Upgrade modal (fiyat, özellikler, CTA) |
+| `frontend/components/premium/PremiumLockedCard.tsx` | **YENİ:** Kilitli özellik kartı (blur preview + overlay) |
+| `frontend/components/premium/FeatureGate.tsx` | **YENİ:** Client-side entitlement kontrolü (5 dk cache) |
+| `frontend/components/premium/UsageLimitBanner.tsx` | **YENİ:** Kredi uyarı banner'ı |
+| `frontend/components/layout/AppShell.tsx` | Plan bazlı lock badge'leri intelligence nav'a eklendi; AGENCY/ENTERPRISE plan etiketleri eklendi |
+| `frontend/app/pricing/page.tsx` | **REBUILD:** 5 plan (Free/Starter/Pro/Agency/Enterprise), aylık/yıllık toggle, özellik karşılaştırma tablosu, FAQ, Schema.org metadata |
+| `frontend/app/(app)/dashboard/page.tsx` | UsageLimitBanner + kilitli premium modüller grid'i eklendi |
+| `frontend/app/(app)/intelligence/digital-twin/page.tsx` | `FeatureGate` (`digital_twin_forecast`) ile sarmalandı |
+| `frontend/app/(app)/intelligence/competitor-intelligence/page.tsx` | `FeatureGate` (`competitor_intelligence`) ile sarmalandı |
+
+---
+
+# README_PROGRESS — Part 17 Post-Audit Fixes (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v9.0.1
+
+Sistem geneli profesyonel denetim sonrası tespit edilen kritik hatalar ve eksik bileşenler giderildi. TypeScript `tsc --noEmit` sıfır hatayla geçiyor.
+
+## Bu Session'da Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/api/v1/routes/risk_radar.py` | **KRİTİK FIX:** `GET /risk-radar/alerts` — `RiskAlert.resolved` AttributeError (kolon kaldırılmıştı). `status` + `severity` filtreli yeni endpoint |
+| `frontend/lib/risk-radar-api.ts` | **KRİTİK FIX:** `RiskAlert` interface güncellendi (8 → 20 alan, `AlertStatus`/`AlertSource` tipleri eklendi, `getAlerts()` imzası güncellendi) |
+| `frontend/app/(app)/admin/risk-alerts/page.tsx` | **YENİ SAYFA:** 3 tab: Risk Alertler (filtre+CRUD), Tarama Logları (trigger), DB Schema (migration health) |
+| `frontend/components/layout/AppShell.tsx` | Admin nav'a `AlertOctagon` "Risk Alertler" linki eklendi; dekoratif arama → fonksiyonel form (`/search?q=...`) |
+| `frontend/app/(app)/admin/page.tsx` | Admin dashboard'a "DB Schema" tab eklendi (migration health, eksik tablolar/indexler, fix komutları) |
+| `frontend/app/(app)/admin/intelligence/page.tsx` | "Tarama Logları" tab eklendi (scan log tablosu + manuel trigger butonu) |
+| `frontend/lib/api.ts` | `request<T>()` export edildi |
+| `frontend/lib/risk-radar-api.ts` | Local `request` kaldırıldı → `lib/api.ts`'ten import (401 auto-logout, 402 kredi hatası desteği kazandı) |
+| `frontend/app/(app)/admin/intelligence/page.tsx` | Local `request` kaldırıldı → `lib/api.ts`'ten import |
+| `frontend/app/(app)/admin/risk-alerts/page.tsx` | Local `apiFetch` kaldırıldı → `lib/api.ts`'ten import |
+| `backend/app/main.py` | Version `6.0.0` → `9.0.0` düzeltildi |
+
+---
+
+# README_PROGRESS — Part 17: Database Integrity + Scheduled Risk Scanning + Risk Alert Backend
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v9.0.0
+**Standart:** Alembic tam kurulu. Scheduled scan her 24 saatte çalışır. Kredi sistemi bypass edilmez. Mock mod tam destekli. Test suite eklendi.
+
+## Part 17'de Yapılan Değişiklikler
+
+### Backend — Alembic Kurulumu (Sıfırdan)
+
+| Dosya | Açıklama |
+|-------|----------|
+| `alembic.ini` | Standard Alembic config; `sqlalchemy.url` env var ile override edilir |
+| `alembic/env.py` | Async-compatible (create_async_engine + NullPool + asyncio.run()); DATABASE_URL env var öncelikli |
+| `alembic/script.py.mako` | Standart Alembic şablon dosyası |
+| `alembic/versions/0001_initial_full_schema.py` | Baseline migration — Parts 1-16'dan 30 tablo (dependency sıralamalı) |
+| `alembic/versions/0002_part17_risk_alert_extended.py` | Part 17 değişiklikleri: 11 yeni kolon, 5 index, risk_scan_logs tablosu, veri migrasyonu |
+
+**Mevcut DB için:**
+```bash
+alembic stamp 0001_initial_full_schema
+alembic upgrade head
+```
+
+**Yeni DB için:**
+```bash
+alembic upgrade head
+```
+
+---
+
+### Backend — Model Değişiklikleri
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `models/risk_radar.py` | `AlertStatus` enum (open/acknowledged/dismissed/resolved), `AlertSource` enum (scheduled_scan/manual_scan/campaign_monitor), `RiskAlert` genişletildi (11 yeni alan: status, source, platform, previous_score, current_score, delta, explanation, evidence, acknowledged_by FK, acknowledged_at, updated_at), `resolved` bool kaldırıldı, `RiskScanLog` yeni model |
+| `models/__init__.py` | `RiskScanLog`, `AlertStatus`, `AlertSource` import ve __all__ eklendi |
+
+---
+
+### Backend — Yeni Servisler
+
+| Dosya | Açıklama |
+|-------|----------|
+| `services/risk_alert_service.py` | `create_or_update_alert()` (dedup: aynı profile+type için açık alert güncellenır, yeni satır oluşturulmaz), `acknowledge_alert()`, `dismiss_alert()`, `resolve_alert()`, `list_alerts()`, `alert_to_dict()` |
+| `services/risk_scan_scheduler.py` | `start_risk_scanner()` / `stop_risk_scanner()` (agent_scheduler API ile uyumlu), `trigger_risk_scan_now()`, `_scanner_loop()` (300s startup delay, 86400s interval), `_run_scan_batch()` (RiskScanLog oluşturur, profil başına hata izolasyonu), `_scan_single_profile()` (own DB session, IntelligenceUsageLog NOT_CHARGED) |
+
+---
+
+### Backend — Yeni / Güncellenen API
+
+| Endpoint | Açıklama |
+|----------|----------|
+| `GET /admin/risk-alerts` | Filtre: severity, status, platform, source, profile_id, from_date, to_date, limit, offset |
+| `GET /admin/risk-alerts/{id}` | Tekil alert detayı |
+| `POST /admin/risk-alerts/{id}/acknowledge` | Admin onayı |
+| `POST /admin/risk-alerts/{id}/dismiss` | Admin reddi |
+| `POST /admin/risk-alerts/{id}/resolve` | Alert çözümlendi |
+| `GET /admin/health/migrations` | Alembic revision, beklenen head, eksik tablo/index, schema_ready |
+| `GET /admin/health/scan-logs` | Son RiskScanLog kayıtları |
+| `POST /admin/risk-scan/trigger` | Manuel scheduled scan tetikle |
+
+---
+
+### Backend — Güncellenen Servisler
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `services/risk_radar/engine.py` | `_check_and_create_alerts()` → `create_or_update_alert()` kullanır; (alerts_created, alerts_updated) tuple döner; per-alert rollback koruması |
+| `main.py` | risk_alerts router, risk_scan_scheduler startup/shutdown, version v9.0.0 |
+
+---
+
+### Backend — Test Suite
+
+| Dosya | Test sayısı | Kapsam |
+|-------|-------------|--------|
+| `tests/__init__.py` | — | Package init |
+| `tests/test_risk_alert_service.py` | 14 test | create/update dedup, delta hesabı, lifecycle transitions, alert_to_dict, admin permission |
+| `tests/test_migration_health.py` | 7 test | EXPECTED_HEAD sabiti, critical tables, critical indexes, response shape, non-admin 403 |
+| `tests/test_risk_scan_scheduler.py` | 7 test | Dedup, scheduled_scan source, start/stop idempotency, AlertStatus/AlertSource enum değerleri |
+
+```bash
+cd backend
+python -m pytest tests/ -v
+```
+
+---
+
+### Intelligence Billing Entegrasyonu
+
+Scheduled scan kredisi KESMEZ:
+- `user_id = 0` (sistem)
+- `status = NOT_CHARGED`
+- `credits_charged = 0`
+- Her profil başına `IntelligenceUsageLog` kaydı
+
+---
+
+### Versiyon
+
+| Bileşen | Versiyon |
+|---------|---------|
+| API | v9.0.0 |
+| root / health endpoint | "part-17-risk-alert-management" |
+
+---
+
 # README_PROGRESS — Part 16 Final Hardening: Risk Radar Provider Reliability + Intelligence Billing UX + Avatar Guarantee
 
 **Tarih:** 2026-06-11

@@ -70,9 +70,32 @@ export interface RangeEstimate {
   basis:      string;
 }
 
+export type DataCompleteness = "complete" | "partial" | "minimal";
+
+export type DataCompletenessLevel = "normal" | "low_confidence" | "excluded";
+
+/** Completeness thresholds (mirrors backend campaign_discovery_service.py) */
+export const COMPLETENESS_EXCLUDE_THRESHOLD  = 60;   // < 60% → excluded
+export const COMPLETENESS_LOW_CONF_THRESHOLD = 75;   // 60–75% → low confidence, budget cap
+export const BUDGET_CAP_LOW_CONF             = 0.15; // max 15% for low-confidence creators
+
+/** Quality badge labels in Turkish (replaces ~EST) */
+export function completenessLabel(completeness: DataCompleteness, fieldsWithData: number): string {
+  const pct = (fieldsWithData / 7) * 100;
+  if (pct >= COMPLETENESS_LOW_CONF_THRESHOLD) return "";      // normal — no badge needed
+  if (pct >= COMPLETENESS_EXCLUDE_THRESHOLD)  return "Düşük Güven";
+  return "Veri Eksik";
+}
+
+export function completenessLevelFromPct(pct: number): DataCompletenessLevel {
+  if (pct < COMPLETENESS_EXCLUDE_THRESHOLD)  return "excluded";
+  if (pct < COMPLETENESS_LOW_CONF_THRESHOLD) return "low_confidence";
+  return "normal";
+}
+
 export interface EnrichedCreator {
   card:               DiscoveryCard;
-  qualityScore:       number;
+  qualityScore:       number | null;   // null when insufficient data (replaces default 49/50)
   qualityBreakdown:   QualityBreakdown;
   tier:               TierName;
   tierLabel:          string;
@@ -82,8 +105,15 @@ export interface EnrichedCreator {
   categoryMatch:      boolean;
   allocatedBudget:    number;
   budgetPct:          number;
+  budgetCapApplied:   boolean;         // true when low-confidence cap was applied
   estimatedReach:     RangeEstimate;
   estimatedEngagement:RangeEstimate;
+  dataCompleteness:   DataCompleteness;
+  dataCompletenessFields: number;
+  dataCompletenessPct:number;          // 0-100
+  completenessLevel:  DataCompletenessLevel;
+  completenessLabel:  string;          // "Düşük Güven" | "Veri Eksik" | ""
+  sourceLabel:        string;
 }
 
 export interface PortfolioTierSummary {
@@ -141,8 +171,10 @@ export interface SimResultV2 {
   nextActions:       string[];
   summary:           string;
   dataSourceNotes:   string[];
-  creatorsFromDB:    number;
-  usedFallbackData:  boolean;
+  creatorsFromDB:          number;
+  excludedFromPortfolio:   number;  // count excluded due to < 60% completeness
+  usedFallbackData:        boolean;
+  reportSource:            "client_simulation_preview" | "insufficient_data";
 }
 
 // ── Brand Taxonomy ─────────────────────────────────────────────────────────────
@@ -738,14 +770,67 @@ export function computeCreatorQualityScore(
   card: DiscoveryCard,
   config: SimConfig,
   profile: CampaignProfile
-): { total: number; breakdown: QualityBreakdown } {
-  const engQ       = Math.min(100, card.engagement_quality_score || 50);
+): {
+  total: number | null;
+  breakdown: QualityBreakdown;
+  completeness: DataCompleteness;
+  fieldsWithData: number;
+  completenessLevel: DataCompletenessLevel;
+  completenessLabel: string;
+  completenessLevelPct: number;
+} {
+  // Track which scoring dimensions have real (non-null, non-zero) data
+  const hasEngQ      = (card.engagement_quality_score ?? 0) > 0;
+  const hasCountry   = !!card.country;
+  const hasCategory  = !!card.category;
+  const hasFraud     = (card.fraud_score ?? 0) > 0;
+  const hasBrandSafe = (card.reputation_risk_score ?? 0) > 0;
+  const hasBrandFit  = (card.brand_fit_score ?? 0) > 0;
+  const hasGrowth    = (card.momentum_score ?? 0) > 0;
+
+  const fieldsWithData = [hasEngQ, hasCountry, hasCategory, hasFraud, hasBrandSafe, hasBrandFit, hasGrowth]
+    .filter(Boolean).length;
+
+  const completenessLevelPct = Math.round((fieldsWithData / 7) * 100);
+  const level = completenessLevelFromPct(completenessLevelPct);
+
+  const completeness: DataCompleteness =
+    fieldsWithData >= 5 ? "complete" :
+    fieldsWithData >= 3 ? "partial"  : "minimal";
+
+  const badge = completenessLabel(completeness, fieldsWithData);
+
   const countryRel = computeCountryRelevance(card, config);
   const catRel     = computeCategoryRelevance(card.category, profile);
-  const fraudSafe  = Math.max(0, 100 - (card.fraud_score || 50));
-  const brandSafe  = Math.max(0, 100 - (card.reputation_risk_score || 30));
-  const brandFit   = Math.min(100, card.brand_fit_score || 50);
-  const growth     = Math.min(100, card.momentum_score || 50);
+
+  // If excluded (< 60% completeness), don't produce a score — return null
+  // (prevents default 49/50 pattern for insufficient data)
+  if (level === "excluded") {
+    return {
+      total: null,
+      completeness,
+      fieldsWithData,
+      completenessLevel: level,
+      completenessLabel: badge,
+      completenessLevelPct,
+      breakdown: {
+        engagementQuality: 0,
+        countryRelevance:  Math.round(countryRel),
+        categoryRelevance: Math.round(catRel),
+        fraudSafety:       0,
+        brandSafety:       0,
+        brandFit:          0,
+        growthStability:   0,
+      },
+    };
+  }
+
+  // Use real values where available; fall back to neutral estimates only when missing
+  const engQ      = Math.min(100, hasEngQ ? card.engagement_quality_score! : 50);
+  const fraudSafe = Math.max(0, 100 - (hasFraud ? card.fraud_score! : 50));
+  const brandSafe = Math.max(0, 100 - (hasBrandSafe ? card.reputation_risk_score! : 30));
+  const brandFit  = Math.min(100, hasBrandFit ? card.brand_fit_score! : 50);
+  const growth    = Math.min(100, hasGrowth ? card.momentum_score! : 50);
 
   const total = Math.round(
     engQ       * 0.20 +
@@ -759,6 +844,11 @@ export function computeCreatorQualityScore(
 
   return {
     total,
+    completeness,
+    fieldsWithData,
+    completenessLevel: level,
+    completenessLabel: badge,
+    completenessLevelPct,
     breakdown: {
       engagementQuality: Math.round(engQ),
       countryRelevance:  Math.round(countryRel),
@@ -926,7 +1016,7 @@ function computeConfidence(
     };
   }
 
-  const avgQuality   = creators.reduce((s, c) => s + c.qualityScore, 0) / n;
+  const avgQuality   = creators.reduce((s, c) => s + (c.qualityScore ?? 0), 0) / n;
   const countryHits  = creators.filter(c => c.countryMatch).length;
   const countryConf  = config.country ? Math.round((countryHits / n) * 100) : 60;
   const catConf      = Math.round(creators.reduce((s, c) => s + c.qualityBreakdown.categoryRelevance, 0) / n);
@@ -1045,28 +1135,70 @@ export function runIntelligentSimulation(
     return buildEmptyResult(config, campaignProfile, audienceIntelligence);
   }
 
+  // Count how many will be excluded for data source notes
+  const excludedCount = unique.filter(card => {
+    const hasEngQ      = (card.engagement_quality_score ?? 0) > 0;
+    const hasCountry   = !!card.country;
+    const hasCategory  = !!card.category;
+    const hasFraud     = (card.fraud_score ?? 0) > 0;
+    const hasBrandSafe = (card.reputation_risk_score ?? 0) > 0;
+    const hasBrandFit  = (card.brand_fit_score ?? 0) > 0;
+    const hasGrowth    = (card.momentum_score ?? 0) > 0;
+    const fieldsWithData = [hasEngQ, hasCountry, hasCategory, hasFraud, hasBrandSafe, hasBrandFit, hasGrowth].filter(Boolean).length;
+    return (fieldsWithData / 7) * 100 < COMPLETENESS_EXCLUDE_THRESHOLD;
+  }).length;
+
   // Score every creator with the new quality engine
   const scored = unique.map(card => {
-    const { total, breakdown } = computeCreatorQualityScore(card, config, campaignProfile);
-    return { card, total, breakdown };
+    const result = computeCreatorQualityScore(card, config, campaignProfile);
+    return { card, ...result };
   });
 
-  // Sort by quality score (relevance-first, NOT follower count)
-  scored.sort((a, b) => b.total - a.total);
+  // Filter out EXCLUDED creators (completeness < 60%) — no archive fallback
+  const eligible = scored.filter(s => s.completenessLevel !== "excluded");
+
+  // Sort by quality score (null scores last, then by score desc)
+  eligible.sort((a, b) => {
+    if (a.total === null && b.total === null) return 0;
+    if (a.total === null) return 1;
+    if (b.total === null) return -1;
+    return b.total - a.total;
+  });
 
   // Select top 8 creators
-  const selected = scored.slice(0, 8);
+  const selected = eligible.slice(0, 8);
 
-  // Budget allocation: quality-weighted
-  const weights    = selected.map(s => Math.pow(s.total / 100, 1.8));
-  const totalWt    = weights.reduce((a, b) => a + b, 0);
+  // Budget allocation: quality-weighted with confidence scaling
+  // Low-confidence creators are capped at BUDGET_CAP_LOW_CONF of total budget
+  const weights = selected.map(s => {
+    if (s.total === null) return 0;
+    const confMult =
+      s.completenessLevel === "low_confidence" ? 0.6 :
+      s.completenessLevel === "normal" ? 1.0 : 0.0;
+    return Math.pow(s.total / 100, 1.8) * confMult;
+  });
+  const totalWt = weights.reduce((a, b) => a + b, 0);
 
   // Build EnrichedCreator list
   const creators: EnrichedCreator[] = selected.map((s, i) => {
-    const allocBudget = totalWt > 0 ? (weights[i] / totalWt) * config.budget : config.budget / selected.length;
+    let allocBudget = totalWt > 0
+      ? (weights[i] / totalWt) * config.budget
+      : config.budget / Math.max(1, selected.length);
+
+    let budgetCapApplied = false;
+
+    // Apply budget cap for low-confidence creators
+    if (s.completenessLevel === "low_confidence") {
+      const cap = config.budget * BUDGET_CAP_LOW_CONF;
+      if (allocBudget > cap) {
+        allocBudget = cap;
+        budgetCapApplied = true;
+      }
+    }
+
     const budgetPct   = (allocBudget / config.budget) * 100;
     const tier        = getCreatorTier(s.card.followers);
-    const { persona, reason: personaReason } = matchPersona(s.card, campaignProfile);
+    const { persona } = matchPersona(s.card, campaignProfile);
     const reach       = estimateCreatorReach(s.card, config);
     const engagement  = estimateCreatorEngagement(s.card, reach);
     const countryMatch = config.country
@@ -1075,9 +1207,18 @@ export function runIntelligentSimulation(
     const catScore    = s.breakdown.categoryRelevance;
     const whySelected = buildWhySelected(s.card, config, s.breakdown, persona);
 
+    let sourceLabel: string;
+    if (s.card.source === "archive") {
+      sourceLabel =
+        s.completenessLevel === "low_confidence" ? "Arşiv · Düşük Güven" :
+        s.completeness === "minimal" ? "Arşiv · Veri Yetersiz" : "Arşiv · Kısmi Veri";
+    } else {
+      sourceLabel = "Analiz · Gerçek Veri";
+    }
+
     return {
       card:               s.card,
-      qualityScore:       s.total,
+      qualityScore:       s.total,      // may be null if somehow missed filter
       qualityBreakdown:   s.breakdown,
       tier,
       tierLabel:          TIER_LABELS[tier],
@@ -1087,8 +1228,15 @@ export function runIntelligentSimulation(
       categoryMatch:      catScore >= 65,
       allocatedBudget:    allocBudget,
       budgetPct,
+      budgetCapApplied,
       estimatedReach:     reach,
       estimatedEngagement:engagement,
+      dataCompleteness:   s.completeness,
+      dataCompletenessFields: s.fieldsWithData,
+      dataCompletenessPct: s.completenessLevelPct,
+      completenessLevel:  s.completenessLevel,
+      completenessLabel:  s.completenessLabel,
+      sourceLabel,
     };
   });
 
@@ -1122,7 +1270,7 @@ export function runIntelligentSimulation(
   const confidence  = computeConfidence(creators, config);
   const feasibility = assessFeasibility(config, creators);
 
-  const avgQuality  = Math.round(creators.reduce((s, c) => s + c.qualityScore, 0) / creators.length);
+  const avgQuality  = Math.round(creators.reduce((s, c) => s + (c.qualityScore ?? 0), 0) / creators.length);
   const avgFraud    = Math.round(creators.reduce((s, c) => s + c.card.fraud_score, 0) / creators.length);
   const countryHits = creators.filter(c => c.countryMatch).length;
   const catHits     = creators.filter(c => c.categoryMatch).length;
@@ -1134,7 +1282,7 @@ export function runIntelligentSimulation(
   const risks = buildRisks(creators, config, avgFraud, microCount, macroCount);
   const nextActions = buildNextActions(config, creators);
   const summary = buildSummary(config, campaignProfile, creators, totalReach, confidence, feasibility, countryHits, catHits);
-  const dataSourceNotes = buildDataSourceNotes(creators);
+  const dataSourceNotes = buildDataSourceNotes(creators, excludedCount);
 
   return {
     campaignProfile,
@@ -1156,7 +1304,9 @@ export function runIntelligentSimulation(
     summary,
     dataSourceNotes,
     creatorsFromDB: unique.length,
+    excludedFromPortfolio: excludedCount,
     usedFallbackData: usedFallback,
+    reportSource: "client_simulation_preview",
   };
 }
 
@@ -1189,7 +1339,8 @@ function buildEmptyResult(config: SimConfig, profile: CampaignProfile, aud: Audi
     nextActions: ["Discovery sayfasından kategori ve ülke filtresiyle influencer aratın.", "En az 5 influencer analiz edin.", "Bu simülasyonu yeniden çalıştırın."],
     summary: "Creator veritabanı boş olduğundan bu simülasyon anlamlı sonuç üretemiyor. Discovery bölümünden influencer analizi yapıldıkça simülasyon gerçek veri ile çalışacak.",
     dataSourceNotes: ["Creator verisi bulunamadı. Tüm tahminler yapılamaz durumda."],
-    creatorsFromDB: 0, usedFallbackData: true,
+    creatorsFromDB: 0, excludedFromPortfolio: 0, usedFallbackData: true,
+    reportSource: "insufficient_data",
   };
 }
 
@@ -1341,16 +1492,39 @@ function fmt(n: number): string {
   return String(Math.round(n));
 }
 
-function buildDataSourceNotes(creators: EnrichedCreator[]): string[] {
+function buildDataSourceNotes(creators: EnrichedCreator[], excludedCount = 0): string[] {
   const notes: string[] = [
     "Erişim ve etkileşim tahminleri: Gerçek takipçi sayısı, platform organik erişim oranı ve etkileşim kalitesi verisine dayalı — tahmini aralık.",
     "Creator Kalite Skoru: Etkileşim kalitesi, ülke uyumu, kategori uyumu, fraud güvenliği, marka güvenliği ve büyüme stabilitesine dayalı — gerçek veri.",
     "Fraud Skoru, Marka Uyum Skoru, ROI Potansiyeli: İç analiz motorundan alınan gerçek skorlar — tahminsel değil.",
     "Revenue / ROAS / Conversion: Geçmiş kampanya performans verisi olmadığından hesaplanamıyor — gerçek kampanya sonrası ölçülmeli.",
-    "Bütçe tahsisi: Creator kalite skoru ağırlıklı algoritmik dağılım — marka tercihine göre manuel ayar önerilir.",
+    "Bütçe tahsisi: Creator kalite ve veri güveni ağırlıklı algoritmik dağılım — marka tercihine göre manuel ayar önerilir.",
   ];
+
+  if (excludedCount > 0) {
+    notes.push(
+      `${excludedCount} creator yetersiz veri kalitesi nedeniyle (veri tamamlama skoru < %60) portföye alınmadı. ` +
+      `Bu creator'lar için gerçek analiz yapılması simülasyon kalitesini artıracaktır.`
+    );
+  }
+
+  const archiveCount = creators.filter(c => c.card.source === "archive").length;
+  const lowConfCount = creators.filter(c => c.completenessLevel === "low_confidence").length;
+
+  if (archiveCount > 0) {
+    notes.push(
+      `${archiveCount} creator arşivden geliyor — kişisel analizinizden değil. ` +
+      `Arşiv verisi yalnızca doğrulanmış profillere ait — ham import verisi portföye dahil edilmez.`
+    );
+  }
+  if (lowConfCount > 0) {
+    notes.push(
+      `${lowConfCount} creator düşük veri güveniyle portföyde (%60–%75 tamamlanma). ` +
+      `Bu creator'ların bütçesi %${Math.round((BUDGET_CAP_LOW_CONF * 100))} ile sınırlandırıldı.`
+    );
+  }
   if (creators.some(c => !c.card.country)) {
-    notes.push("Bazı creator'larda ülke verisi eksik — ülke uyum skoru bu creator'lar için konservatif hesaplandı.");
+    notes.push("Bazı creator'larda ülke verisi eksik — ülke uyum skoru konservatif hesaplandı.");
   }
   return notes;
 }

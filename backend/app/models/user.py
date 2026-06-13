@@ -10,7 +10,9 @@ class PlanType(str, enum.Enum):
     FREE = "free"
     STARTER = "starter"
     PRO = "pro"
-    BUSINESS = "business"
+    BUSINESS = "business"    # legacy alias kept for backward compat
+    AGENCY = "agency"
+    ENTERPRISE = "enterprise"
 
 
 class User(Base):

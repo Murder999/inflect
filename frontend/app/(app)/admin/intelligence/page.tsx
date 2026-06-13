@@ -6,34 +6,8 @@ import {
   BarChart2, Filter, RefreshCw, CheckCircle,
   ShieldAlert, Layers, Activity, Play,
 } from "lucide-react";
-import { authApi } from "@/lib/api";
+import { authApi, request } from "@/lib/api";
 import { providerHealthApi, type ProviderHealthResult } from "@/lib/risk-radar-api";
-
-const API_BASE =
-  (typeof window !== "undefined" ? (window as any).__NEXT_PUBLIC_API_URL : undefined) ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8000/api/v1";
-
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("access_token");
-}
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try { const j = await res.json(); detail = j.detail ?? j.message ?? detail; } catch {}
-    throw new Error(detail);
-  }
-  return res.json();
-}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -381,12 +355,16 @@ export default function AdminIntelligencePage() {
   const [editing,       setEditing]       = useState<FeatureConfig | null>(null);
   const [loading,       setLoading]       = useState(true);
   const [logLoading,    setLogLoading]    = useState(false);
-  const [activeTab,     setActiveTab]     = useState<"features" | "usage" | "summary" | "providers">("features");
+  const [activeTab,     setActiveTab]     = useState<"features" | "usage" | "summary" | "providers" | "scan-logs">("features");
   const [toast,         setToast]         = useState<string | null>(null);
   const [providers,     setProviders]     = useState<ProviderHealthResult[]>([]);
   const [agentsMode,    setAgentsMode]    = useState<string>("");
   const [provLoading,   setProvLoading]   = useState(false);
   const [testingProv,   setTestingProv]   = useState<string | null>(null);
+  const [scanLogs,      setScanLogs]      = useState<any[]>([]);
+  const [scanLoading,   setScanLoading]   = useState(false);
+  const [scanTriggering,setScanTriggering]= useState(false);
+  const [scanMsg,       setScanMsg]       = useState("");
 
   useEffect(() => {
     authApi.me().then(u => setIsAdmin(!!u.is_admin)).catch(() => {});
@@ -459,11 +437,37 @@ export default function AdminIntelligencePage() {
     }
   };
 
+  const loadScanLogs = useCallback(async () => {
+    setScanLoading(true);
+    try {
+      const res = await request<{ ok: boolean; logs: any[] }>("/admin/health/scan-logs?limit=20");
+      setScanLogs(res.logs);
+    } catch (e: any) {
+      setToast(`Hata: ${e.message}`);
+    } finally {
+      setScanLoading(false);
+    }
+  }, []);
+
+  const triggerScan = async () => {
+    setScanTriggering(true); setScanMsg("");
+    try {
+      const res = await request<any>("/admin/risk-scan/trigger", { method: "POST" });
+      setScanMsg(`✓ Tarama başlatıldı — ${res.profiles_scanned ?? "?"} profil, ${res.alerts_created ?? "?"} yeni alert`);
+      loadScanLogs();
+    } catch (e: any) {
+      setScanMsg(`Hata: ${e.message}`);
+    } finally {
+      setScanTriggering(false);
+    }
+  };
+
   useEffect(() => { loadFeatures(); loadSummary(); }, [loadFeatures, loadSummary]);
   useEffect(() => {
     if (activeTab === "usage")     loadLogs(0);
     if (activeTab === "providers") loadProviders();
-  }, [activeTab, filterSlug, filterStatus, loadLogs, loadProviders]);
+    if (activeTab === "scan-logs") loadScanLogs();
+  }, [activeTab, filterSlug, filterStatus, loadLogs, loadProviders, loadScanLogs]);
 
   const handleFeatureSaved = (updated: FeatureConfig) => {
     setFeatures(fs => fs.map(f => f.slug === updated.slug ? updated : f));
@@ -540,6 +544,7 @@ export default function AdminIntelligencePage() {
           ["usage",     "Kullanım Logları",  <BarChart2 size={12} key="b" />],
           ["summary",   "Özet",             <Layers size={12} key="l" />],
           ["providers", "Provider Sağlık",  <Activity size={12} key="a" />],
+          ["scan-logs", "Tarama Logları",   <ShieldAlert size={12} key="s" />],
         ] as Array<[typeof activeTab, string, React.ReactNode]>).map(([id, label, icon]) => (
           <button
             key={id}
@@ -927,6 +932,93 @@ export default function AdminIntelligencePage() {
               </div>
             )
           }
+        </div>
+      )}
+
+      {/* Scan Logs tab */}
+      {activeTab === "scan-logs" && (
+        <div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
+            <button
+              onClick={triggerScan}
+              disabled={scanTriggering}
+              style={{
+                display: "flex", alignItems: "center", gap: 7, padding: "9px 18px",
+                borderRadius: 8, fontSize: 13, fontWeight: 600,
+                cursor: scanTriggering ? "not-allowed" : "pointer",
+                background: scanTriggering ? "var(--bg-card)" : "linear-gradient(135deg,#7c3aed,#4c1d95)",
+                color: scanTriggering ? "var(--text-3)" : "#fff",
+                border: scanTriggering ? "1px solid var(--line)" : "none",
+                opacity: scanTriggering ? 0.7 : 1,
+              }}
+            >
+              <Play size={14} />
+              {scanTriggering ? "Taranıyor…" : "Manuel Tarama Başlat"}
+            </button>
+            <button
+              onClick={loadScanLogs}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-card)", border: "1px solid var(--line)", color: "var(--text-2)" }}
+            >
+              <RefreshCw size={12} /> Yenile
+            </button>
+            {scanMsg && (
+              <span style={{ fontSize: 12, color: scanMsg.startsWith("Hata") ? "#ef4444" : "#22c55e", fontWeight: 500 }}>
+                {scanMsg}
+              </span>
+            )}
+          </div>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+            {scanLoading ? (
+              <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>Yükleniyor…</div>
+            ) : scanLogs.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+                Henüz tarama log kaydı yok. "Manuel Tarama Başlat" butonunu kullanın.
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-subtle)", borderBottom: "1px solid var(--line)" }}>
+                    {["Başlangıç", "Kaynak", "Taranan", "Başarılı", "Hatalı", "Yeni Alert", "Güncelleme", "Süre", "Durum"].map((h) => (
+                      <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {scanLogs.map((log: any) => {
+                    const duration = log.completed_at
+                      ? Math.round((new Date(log.completed_at).getTime() - new Date(log.started_at).getTime()) / 1000)
+                      : null;
+                    return (
+                      <tr key={log.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
+                          {new Date(log.started_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}
+                        </td>
+                        <td style={{ padding: "9px 12px" }}>
+                          <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: "var(--bg-subtle)", border: "1px solid var(--line)" }}>
+                            {log.trigger_source === "scheduled_scan" ? "Otomatik" : "Manuel"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "9px 12px", fontWeight: 600 }}>{log.profiles_scanned}</td>
+                        <td style={{ padding: "9px 12px", color: "#22c55e" }}>{log.profiles_succeeded}</td>
+                        <td style={{ padding: "9px 12px", color: log.profiles_failed > 0 ? "#ef4444" : "var(--text-3)" }}>{log.profiles_failed}</td>
+                        <td style={{ padding: "9px 12px", color: log.alerts_created > 0 ? "#7c3aed" : "var(--text-3)", fontWeight: log.alerts_created > 0 ? 600 : 400 }}>{log.alerts_created}</td>
+                        <td style={{ padding: "9px 12px", color: "var(--text-3)" }}>{log.alerts_updated}</td>
+                        <td style={{ padding: "9px 12px", color: "var(--text-3)" }}>{duration != null ? `${duration}s` : "…"}</td>
+                        <td style={{ padding: "9px 12px" }}>
+                          {log.error_message
+                            ? <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "rgba(239,68,68,0.08)", color: "#ef4444" }}>HATA</span>
+                            : log.completed_at
+                            ? <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "rgba(34,197,94,0.08)", color: "#22c55e" }}>TAMAM</span>
+                            : <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "rgba(245,158,11,0.08)", color: "#f59e0b" }}>DEVAM</span>
+                          }
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 

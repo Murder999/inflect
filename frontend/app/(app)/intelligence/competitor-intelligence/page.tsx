@@ -27,6 +27,7 @@ import {
 } from "@/lib/competitor-intelligence-api";
 import { authApi } from "@/lib/api";
 import { archiveApi } from "@/lib/api";
+import FeatureGate from "@/components/premium/FeatureGate";
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 
@@ -874,6 +875,11 @@ export default function CompetitorIntelligencePage() {
   const canGenerate = !!(selectedBrand || inputValue.trim()) && !reportLoading;
 
   return (
+    <FeatureGate
+      featureKey="competitor_intelligence"
+      title="Competitor Intelligence™"
+      message="Rakip markaların influencer stratejilerini analiz et. Hangi influencer'larla çalışıyorlar, ne kadar harcıyorlar? Agency planı gereklidir."
+    >
     <main style={{ padding: "28px 32px", maxWidth: 1200, margin: "0 auto" }}>
       {/* ── Page header ── */}
       <div style={{ marginBottom: 22 }}>
@@ -1141,5 +1147,6 @@ export default function CompetitorIntelligencePage() {
         @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
       `}</style>
     </main>
+    </FeatureGate>
   );
 }

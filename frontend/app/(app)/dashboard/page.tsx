@@ -3,6 +3,10 @@ import { useEffect, useState } from "react";
 import { dashboardApi, type DashboardStats, type Leaderboards, type AnalysisCard } from "@/lib/api";
 import Link from "next/link";
 import ProfileAvatar from "@/components/ProfileAvatar";
+import UsageLimitBanner from "@/components/premium/UsageLimitBanner";
+import PremiumLockedCard from "@/components/premium/PremiumLockedCard";
+import { entitlementsApi, type EntitlementMap } from "@/lib/entitlements-api";
+import { Dna, Swords, ShieldAlert, FileDown, Layers, BarChart2 } from "lucide-react";
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -89,16 +93,73 @@ function LeaderboardSection({ title, icon, items, highlight, emptyText }: {
   );
 }
 
+const PREMIUM_MODULES = [
+  {
+    key:  "digital_twin_forecast",
+    icon: Dna,
+    title: "Digital Twin™ Forecast",
+    message: "90 günlük büyüme ve risk tahmini hazır. Davranış modelini açmak için Agency paketine geçin.",
+    plan: "agency",
+    href: "/intelligence/digital-twin",
+  },
+  {
+    key:  "competitor_intelligence",
+    icon: Swords,
+    title: "Competitor Intelligence™",
+    message: "Rakip markaların influencer stratejisini görün. Agency paketine geçin.",
+    plan: "agency",
+    href: "/intelligence/competitor-intelligence",
+  },
+  {
+    key:  "risk_evidence",
+    icon: ShieldAlert,
+    title: "Risk Kanıtları",
+    message: "Kritik risk sinyallerinin detaylı kanıtları için Pro paketine geçin.",
+    plan: "pro",
+    href: "/intelligence/risk-radar",
+  },
+  {
+    key:  "pdf_export",
+    icon: FileDown,
+    title: "PDF Rapor",
+    message: "Profesyonel raporları indirin ve müşterilerle paylaşın. Pro paketine geçin.",
+    plan: "pro",
+    href: "/reports",
+  },
+  {
+    key:  "batch_analysis",
+    icon: Layers,
+    title: "Toplu Analiz",
+    message: "Onlarca influencer'ı tek seferde tarayın. Agency paketine geçin.",
+    plan: "agency",
+    href: "/discovery",
+  },
+  {
+    key:  "scheduled_scan",
+    icon: BarChart2,
+    title: "Zamanlanmış Tarama",
+    message: "Portföyünüzü otomatik günlük izleyin. Agency paketine geçin.",
+    plan: "agency",
+    href: "/intelligence/risk-radar",
+  },
+];
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [boards, setBoards] = useState<Leaderboards | null>(null);
   const [loading, setLoading] = useState(true);
+  const [entitlements, setEntitlements] = useState<EntitlementMap>({});
+  const [plan, setPlan] = useState("free");
 
   useEffect(() => {
     Promise.all([dashboardApi.stats(), dashboardApi.leaderboards()])
       .then(([s, b]) => { setStats(s); setBoards(b); })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    entitlementsApi.getMyEntitlements()
+      .then((r) => { setEntitlements(r.entitlements); setPlan(r.plan); })
+      .catch(() => {});
   }, []);
 
   if (loading) return <div style={{ padding: 48, textAlign: "center", color: "var(--text-3)" }}>Yükleniyor...</div>;
@@ -109,7 +170,7 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 400, margin: "0 0 4px", color: "var(--text-1)" }}>
             {stats?.user.full_name ? `Hoşgeldin, ${stats.user.full_name}.` : "Dashboard"}
@@ -118,6 +179,15 @@ export default function DashboardPage() {
         </div>
         <Link href="/search" className="btn btn-primary">+ Yeni Analiz</Link>
       </div>
+
+      {/* Credits usage banner */}
+      {stats?.stats && (
+        <UsageLimitBanner
+          creditsRemaining={stats.stats.credits_remaining}
+          creditsTotal={stats.stats.credits_total}
+          plan={plan}
+        />
+      )}
 
       {/* Metric Cards */}
       {s && (
@@ -182,6 +252,70 @@ export default function DashboardPage() {
             emptyText="Analiz yapıldıkça burada görünecek." />
         </>
       )}
+
+      {/* Premium module teasers — show locked ones only */}
+      {(() => {
+        const locked = PREMIUM_MODULES.filter((m) => entitlements[m.key] === false);
+        if (locked.length === 0) return null;
+        return (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 500, margin: 0, color: "var(--text-1)" }}>Premium Modüller</h3>
+              <Link href="/pricing" style={{ fontSize: 12, color: "var(--brand-600)", textDecoration: "none" }}>Tüm planları gör →</Link>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+              {locked.map((m) => {
+                const Icon = m.icon;
+                return (
+                  <div key={m.key} style={{
+                    borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden",
+                    background: "var(--bg-elevated)",
+                    display: "flex", flexDirection: "column",
+                  }}>
+                    {/* Top stripe */}
+                    <div style={{
+                      padding: "14px 16px 10px",
+                      background: "linear-gradient(135deg,rgba(99,102,241,0.06),rgba(16,185,129,0.04))",
+                      borderBottom: "1px solid var(--line)",
+                      display: "flex", alignItems: "center", gap: 10,
+                    }}>
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 9,
+                        background: "linear-gradient(135deg,var(--brand-500),#6366F1)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        flexShrink: 0,
+                      }}>
+                        <Icon size={16} color="#fff" />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{m.title}</div>
+                        <div style={{
+                          fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+                          color: "#6366F1", background: "rgba(99,102,241,0.1)", borderRadius: 99,
+                          padding: "1px 7px", display: "inline-block", marginTop: 2,
+                        }}>
+                          {m.plan === "agency" ? "Agency" : m.plan === "pro" ? "Pro" : m.plan} paketi
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ padding: "12px 16px 14px", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                      <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 12px", lineHeight: 1.6 }}>{m.message}</p>
+                      <PremiumLockedCard
+                        featureKey={m.key}
+                        title={m.title}
+                        message={m.message}
+                        requiredPlan={m.plan}
+                        currentPlan={plan}
+                        compact
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Recent Analyses Table */}
       {stats && stats.recent_analyses.length > 0 && (

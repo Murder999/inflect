@@ -1,8 +1,8 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { discoverApi } from "@/lib/api";
+import { discoverApi, brandMatchApi, type BrandMatchAnalyzeResponse } from "@/lib/api";
 import {
-  runBrandMatchAnalysis, BRAND_URL_SUGGESTIONS,
+  runBrandMatchAnalysis, BRAND_URL_SUGGESTIONS, MIN_CREATOR_POOL,
   type BrandMatchResult, type MatchedCreator, type BrandWebsiteEvidence,
   type EvidenceGenome, type GenomeDimensionScore,
 } from "@/lib/brand-match-engine";
@@ -80,15 +80,15 @@ const CONF_COLOR: Record<string, string> = { High: "var(--green)", Medium: "#F59
 
 // ── Loading Steps ──────────────────────────────────────────────────────────────
 const ANALYSIS_STEPS = [
-  "URL doğrulanıyor ve güvenlik kontrolü yapılıyor...",
-  "Marka web sitesi alınıyor ve içerik analiz ediliyor...",
+  "Backend'e gönderiliyor...",
+  "Marka domain'i çözülüyor (TLD taraması)...",
+  "Resmi web sitesi alınıyor...",
   "HTML sinyalleri çıkarılıyor (başlık, meta, OG, başlıklar)...",
-  "Marka Intelligence profili oluşturuluyor...",
+  "Evidence kalitesi doğrulanıyor...",
   "Brand Genome DNA kanıt bazlı hesaplanıyor...",
   "Hedef kitle segmentleri analiz ediliyor...",
   "Creator veritabanı taranıyor...",
   "Genome Compatibility skorları hesaplanıyor...",
-  "AI Brand Match algoritması çalışıyor...",
   "Portföy yapısı ve tier dağılımı optimize ediliyor...",
   "Mismatch detection çalıştırılıyor...",
   "Güven ve şeffaflık raporu derleniyor...",
@@ -132,7 +132,7 @@ function UrlInput({ value, onChange, onAnalyze, loading }: { value: string; onCh
             onChange={e => { onChange(e.target.value); search(e.target.value); }}
             onKeyDown={onKey}
             onFocus={() => value && search(value)}
-            placeholder="nike.com"
+            placeholder="nike.com veya sadece nike"
             autoComplete="off"
             style={{
               width: "100%", padding: "14px 16px 14px 42px",
@@ -204,20 +204,33 @@ function GenomeRadar({ brand, creator }: { brand: Record<string, number>; creato
   );
 }
 
+// ── Input validation ────────────────────────────────────────────────────────────
+function looksLikeDomain(input: string): boolean {
+  const cleaned = input.trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .split("?")[0];
+  return cleaned.includes(".");
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
-type PageState = "landing" | "analyzing" | "report";
+type PageState = "landing" | "analyzing" | "domain_unresolved" | "fetch_failed" | "report";
 
 export default function BrandMatchPage() {
-  const [state,        setState]        = useState<PageState>("landing");
-  const [url,          setUrl]          = useState("");
-  const [targetMarket, setTargetMarket] = useState("Global");
-  const [competitorUrl,setCompetitorUrl]= useState("");
-  const [result,       setResult]       = useState<BrandMatchResult | null>(null);
-  const [step,         setStep]         = useState(0);
-  const [err,          setErr]          = useState("");
-  const [expanded,     setExpanded]     = useState<number | null>(null);
-  const [history,      setHistory]      = useState<string[]>([]);
-  const [genomeCreator,setGenomeCreator]= useState<MatchedCreator | null>(null);
+  const [state,            setState]           = useState<PageState>("landing");
+  const [url,              setUrl]             = useState("");
+  const [targetMarket,     setTargetMarket]    = useState("Global");
+  const [competitorUrl,    setCompetitorUrl]   = useState("");
+  const [result,           setResult]          = useState<BrandMatchResult | null>(null);
+  const [step,             setStep]            = useState(0);
+  const [err,              setErr]             = useState("");
+  const [expanded,         setExpanded]        = useState<number | null>(null);
+  const [history,          setHistory]         = useState<string[]>([]);
+  const [genomeCreator,    setGenomeCreator]   = useState<MatchedCreator | null>(null);
+  const [failedEvidence,   setFailedEvidence]  = useState<BrandWebsiteEvidence | null>(null);
+  const [backendResponse,  setBackendResponse] = useState<BrandMatchAnalyzeResponse | null>(null);
+  const [lockedSections,   setLockedSections]  = useState<string[]>([]);
 
   // Load history from localStorage
   useEffect(() => {
@@ -229,10 +242,11 @@ export default function BrandMatchPage() {
 
   async function runAnalysis() {
     const cleaned = url.trim();
-    if (!cleaned) { setErr("Lütfen bir marka URL'si girin."); return; }
+    if (!cleaned) { setErr("Lütfen bir marka adı veya URL girin."); return; }
+
     setErr(""); setState("analyzing"); setStep(0);
 
-    // Animated steps
+    // Animate steps while backend works
     let si = 0;
     const tick = () => {
       si++;
@@ -243,48 +257,93 @@ export default function BrandMatchPage() {
     };
     setTimeout(tick, 300);
 
-    // Fetch creators + website evidence in parallel
+    // ── 1. Backend brand-match analyze (resolve + fetch + persist) ────────────
+    let backendResp: BrandMatchAnalyzeResponse | null = null;
+    try {
+      backendResp = await brandMatchApi.analyze({ input: cleaned, target_market: targetMarket });
+      setBackendResponse(backendResp);
+      setLockedSections(backendResp.locked_sections ?? []);
+    } catch (apiErr) {
+      setErr(apiErr instanceof Error ? apiErr.message : "Analiz başlatılamadı. Backend bağlantısını kontrol edin.");
+      setState("landing");
+      return;
+    }
+
+    // ── 2. Handle domain_unresolved ───────────────────────────────────────────
+    if (backendResp.resolver_status !== "resolved") {
+      setState("domain_unresolved");
+      return;
+    }
+
+    // ── 3. Handle fetch_failed ────────────────────────────────────────────────
+    if (!backendResp.verified_report || backendResp.fetch_status !== "success") {
+      const ev = backendResp.evidence;
+      setFailedEvidence(ev ? {
+        url:            ev.url,
+        fetchStatus:    ev.fetchStatus,
+        fetchError:     ev.fetchError,
+        responseTimeMs: ev.responseTimeMs,
+        h1s:            ev.h1s,
+        h2s:            ev.h2s,
+        keywordHints:   ev.keywordHints,
+        bodySnippets:   ev.bodySnippets,
+        socialLinks:    ev.socialLinks,
+        aiUsed:         ev.aiUsed,
+      } : {
+        url: cleaned, fetchStatus: "failed",
+        fetchError: backendResp.user_message || "Web sitesine ulaşılamadı",
+        h1s: [], h2s: [], keywordHints: [], bodySnippets: [], socialLinks: [], aiUsed: false,
+      });
+      setState("fetch_failed");
+      return;
+    }
+
+    // ── 4. Map backend evidence to BrandWebsiteEvidence for the engine ────────
+    const ev = backendResp.evidence!;
+    const websiteEvidence: BrandWebsiteEvidence = {
+      url:            ev.url,
+      fetchStatus:    ev.fetchStatus as BrandWebsiteEvidence["fetchStatus"],
+      fetchError:     ev.fetchError,
+      responseTimeMs: ev.responseTimeMs,
+      pageTitle:      ev.pageTitle,
+      metaDescription:ev.metaDescription,
+      ogTitle:        ev.ogTitle,
+      ogDescription:  ev.ogDescription,
+      h1s:            ev.h1s,
+      h2s:            ev.h2s,
+      bodySnippets:   ev.bodySnippets,
+      keywordHints:   ev.keywordHints,
+      socialLinks:    ev.socialLinks,
+      language:       ev.language,
+      aiUsed:         false,
+      targetMarket,
+    };
+
+    // ── 5. Fetch creators (parallel with backend call was not done; fetch now) ─
     let raw: import("@/lib/api").DiscoveryCard[] = [];
-    let websiteEvidence: BrandWebsiteEvidence | undefined;
+    try {
+      const r1 = await discoverApi.feed({ limit: 50, min_brand_fit: 20, max_fraud: 75 });
+      raw = r1.items;
+      if (raw.length < 5) {
+        const r2 = await discoverApi.feed({ limit: 30 });
+        const existing = new Set(raw.map(c => `${c.username}::${c.platform}`));
+        raw = [...raw, ...r2.items.filter(c => !existing.has(`${c.username}::${c.platform}`))];
+      }
+    } catch { /* empty DB handled gracefully */ }
 
-    await Promise.allSettled([
-      // Creator fetch
-      (async () => {
-        try {
-          const r1 = await discoverApi.feed({ limit: 50, min_brand_fit: 20, max_fraud: 75 });
-          raw = r1.items;
-          if (raw.length < 5) {
-            const r2 = await discoverApi.feed({ limit: 30 });
-            const existing = new Set(raw.map(c => `${c.username}::${c.platform}`));
-            raw = [...raw, ...r2.items.filter(c => !existing.has(`${c.username}::${c.platform}`))];
-          }
-        } catch { /* empty DB handled gracefully */ }
-      })(),
-      // Website evidence fetch via server-side API route
-      (async () => {
-        try {
-          const resp = await fetch("/api/intelligence/brand/analyze", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: cleaned.startsWith("http") ? cleaned : `https://${cleaned}`, targetMarket }),
-          });
-          if (resp.ok) {
-            websiteEvidence = await resp.json() as BrandWebsiteEvidence;
-          }
-        } catch { /* evidence unavailable — gracefully degrade */ }
-      })(),
-    ]);
-
-    const res = runBrandMatchAnalysis(cleaned, raw, {
+    // ── 6. Run client-side brand analysis engine with verified evidence ────────
+    const resolvedDomain = backendResp.resolved_domain || cleaned;
+    const res = runBrandMatchAnalysis(resolvedDomain, raw, {
       websiteEvidence,
       targetMarket,
       competitorUrl: competitorUrl.trim() || undefined,
     });
 
-    await new Promise(r => setTimeout(r, 2400));
+    await new Promise(r => setTimeout(r, 800));
 
     // Save to history
-    const newHistory = [cleaned, ...history.filter(h => h !== cleaned)].slice(0, 5);
+    const displayInput = backendResp.resolved_domain || cleaned;
+    const newHistory = [displayInput, ...history.filter(h => h !== displayInput)].slice(0, 5);
     setHistory(newHistory);
     try { localStorage.setItem("brand_match_history", JSON.stringify(newHistory)); } catch { /* ignore */ }
 
@@ -307,7 +366,7 @@ export default function BrandMatchPage() {
             AI Brand Match<sup style={{ fontSize: 22, fontWeight: 700, verticalAlign: "super" }}>™</sup>
           </h1>
           <p style={{ fontSize: 20, fontWeight: 500, color: "var(--text-3)", margin: "0 0 8px", letterSpacing: "-0.02em" }}>
-            Paste a website. Get the perfect creator strategy.
+            Marka adı veya web sitesi gir. Gerçek veriyle strateji al.
           </p>
           <p style={{ fontSize: 14, color: "var(--text-3)", margin: "0 0 40px", maxWidth: 520, marginInline: "auto", lineHeight: 1.7 }}>
             Brand Genome Analysis, Genome Compatibility™ ve AI-powered creator matching ile
@@ -437,12 +496,141 @@ export default function BrandMatchPage() {
     );
   }
 
+  // ── DOMAIN UNRESOLVED ────────────────────────────────────────────────────────
+  if (state === "domain_unresolved") {
+    const br = backendResponse;
+    const slug = url.trim().toLowerCase().replace(/\s+/g, "-");
+    return (
+      <div style={{ maxWidth: 680, margin: "0 auto", paddingTop: 32 }}>
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 16, border: "1.5px solid rgba(245,158,11,0.3)", padding: "28px 32px", marginBottom: 20, textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: "rgba(245,158,11,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <Globe size={24} color="#F59E0B" />
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: "var(--text-1)", margin: "0 0 8px", letterSpacing: "-0.03em" }}>
+            Resmi Domain Bulunamadı
+          </h2>
+          <p style={{ fontSize: 13, color: "var(--text-2)", margin: "0 0 14px", lineHeight: 1.65 }}>
+            {br?.user_message || `"${url.trim()}" için resmi web sitesi tespit edilemedi. Doğrulanmış rapor üretilmedi.`}
+          </p>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 18px", borderRadius: 99, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
+            <Shield size={13} color="#F59E0B" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B" }}>Sahte domain tahmini yapılmadı — rapor üretilmedi</span>
+          </div>
+        </div>
+
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "20px 24px", marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}>Denenecek Adresler</div>
+          {[`${slug}.com`, `${slug}.com.tr`, `${slug}.net`].map((candidate, i) => (
+            <button key={i} onClick={() => { setUrl(candidate); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 8, cursor: "pointer", textAlign: "left" }}>
+              <Globe size={13} color="var(--text-3)" />
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-1)" }}>{candidate}</span>
+              <ArrowRight size={12} color="var(--text-3)" style={{ marginLeft: "auto" }} />
+            </button>
+          ))}
+        </div>
+
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1.5px solid rgba(16,185,129,0.25)", padding: "22px 26px" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-1)", marginBottom: 6 }}>Resmi web sitesi adresini girin</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 16 }}>
+            Marka adı yerine doğrudan web sitesi adresini girin: <code style={{ background: "var(--bg-subtle)", padding: "1px 5px", borderRadius: 4 }}>{slug}.com.tr</code>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <input value={url} onChange={e => setUrl(e.target.value)} placeholder={`${slug}.com.tr`} onKeyDown={e => e.key === "Enter" && runAnalysis()}
+              style={{ flex: 1, padding: "12px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, border: "1.5px solid var(--line)", background: "var(--bg-subtle)", color: "var(--text-1)", outline: "none" }}
+            />
+            <button onClick={runAnalysis} style={{ padding: "12px 22px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", background: "linear-gradient(135deg,var(--green),#34D399)", color: "#fff", border: "none" }}>
+              Tekrar Dene
+            </button>
+          </div>
+          <button onClick={() => { setState("landing"); setBackendResponse(null); setUrl(""); }} style={{ fontSize: 12, color: "var(--text-3)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+            ← Başa dön
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── FETCH FAILED ──────────────────────────────────────────────────────────────
+  if (state === "fetch_failed") {
+    const ev = failedEvidence;
+    const statusLabel =
+      ev?.fetchStatus === "timeout"     ? "Zaman Aşımı (8s)" :
+      ev?.fetchStatus === "invalid_url" ? "Geçersiz URL" :
+      ev?.fetchStatus === "blocked"     ? "Erişim Engellendi" :
+      "Bağlantı Hatası";
+
+    return (
+      <div style={{ maxWidth: 680, margin: "0 auto", paddingTop: 32 }}>
+        {/* Error header */}
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 16, border: "1.5px solid rgba(239,68,68,0.3)", padding: "28px 32px", marginBottom: 20, textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: "rgba(239,68,68,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <WifiOff size={24} color="var(--red)" />
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: "var(--text-1)", margin: "0 0 8px", letterSpacing: "-0.03em" }}>
+            Web Sitesi Verisi Çekilemedi
+          </h2>
+          <p style={{ fontSize: 13, color: "var(--text-2)", margin: "0 0 14px", lineHeight: 1.65 }}>
+            <strong style={{ color: "var(--red)" }}>{statusLabel}:</strong>{" "}
+            {ev?.fetchError || "Web sitesine erişilemedi."}
+          </p>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 18px", borderRadius: 99, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+            <Shield size={13} color="var(--red)" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--red)" }}>Sahte veri üretilmedi — rapor oluşturulmadı</span>
+          </div>
+        </div>
+
+        {/* Why no report */}
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "20px 24px", marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}>Neden Rapor Üretilmedi?</div>
+          {[
+            "Brand DNA skorları gerçek web sitesi içeriğine dayanmalıdır — taxonomy/bilinen profil ile üretilen DNA yanıltıcıdır.",
+            "Creator eşleşmesi kanıtsız marka genomu üzerinden yapılamaz.",
+            `Target: ${url} → ${ev?.fetchStatus === "timeout" ? "8 saniye içinde yanıt alınamadı." : "DNS veya HTTP hatası."}`,
+            "AI Brand Match™ yalnızca doğrulanmış web evidence ile çalışır.",
+          ].map((t, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6, marginBottom: 8 }}>
+              <XCircle size={13} color="var(--red)" style={{ flexShrink: 0, marginTop: 1 }} />
+              {t}
+            </div>
+          ))}
+        </div>
+
+        {/* Re-entry form */}
+        <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1.5px solid rgba(16,185,129,0.25)", padding: "22px 26px" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-1)", marginBottom: 6 }}>Resmi domain adresini girin ve tekrar deneyin</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 16 }}>
+            Marka adı yerine doğrudan web sitesi adresi girin: <code style={{ background: "var(--bg-subtle)", padding: "1px 5px", borderRadius: 4 }}>karaca.com.tr</code>,{" "}
+            <code style={{ background: "var(--bg-subtle)", padding: "1px 5px", borderRadius: 4 }}>nike.com</code>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              placeholder="karaca.com.tr"
+              onKeyDown={e => e.key === "Enter" && runAnalysis()}
+              style={{ flex: 1, padding: "12px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, border: "1.5px solid var(--line)", background: "var(--bg-subtle)", color: "var(--text-1)", outline: "none" }}
+              onFocusCapture={e => (e.currentTarget.style.borderColor = "var(--green)")}
+              onBlurCapture={e =>  (e.currentTarget.style.borderColor = "var(--line)")}
+            />
+            <button onClick={runAnalysis} style={{ padding: "12px 22px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", background: "linear-gradient(135deg,var(--green),#34D399)", color: "#fff", border: "none" }}>
+              Tekrar Dene
+            </button>
+          </div>
+          <button onClick={() => { setState("landing"); setFailedEvidence(null); setUrl(""); }} style={{ fontSize: 12, color: "var(--text-3)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+            ← Başa dön
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ── REPORT ─────────────────────────────────────────────────────────────────────
   if (!result) return null;
   const {
     brand, genome, tone, audience, creators, portfolio, overlap, mismatches, expansions,
     confidence, insights, risks, opportunities, nextActions, summary, dataSourceNotes,
     websiteEvidence, evidenceGenome, creatorCoverage, targetMarket: resultTargetMarket,
+    reportStatus, verifiedReport,
   } = result;
 
   const genomeChartData = GENOME_LABELS.map(({ key, label }) => ({
@@ -463,7 +651,9 @@ export default function BrandMatchPage() {
                 <CheckCircle size={11} color="var(--green)" />
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)" }}>AI Brand Match™ Report · {new Date().toLocaleDateString("tr-TR")}</span>
               </div>
-              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "rgba(99,102,241,0.12)", color: "#6366F1", fontWeight: 700 }}>{brand.detectedFrom === "url_lookup" ? "✓ Verified" : brand.detectedFrom === "taxonomy" ? "~ Taxonomy" : "~ Extracted"}</span>
+              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, fontWeight: 700, background: reportStatus === "verified" ? "rgba(16,185,129,0.12)" : reportStatus === "partial_no_creators" ? "rgba(245,158,11,0.12)" : "rgba(239,68,68,0.12)", color: reportStatus === "verified" ? "var(--green)" : reportStatus === "partial_no_creators" ? "#F59E0B" : "var(--red)" }}>
+                {reportStatus === "verified" ? "✓ Verified" : reportStatus === "partial_no_creators" ? "⚠ Creator Havuzu Yetersiz" : "~ Kısmi"}
+              </span>
             </div>
             <h1 style={{ fontSize: 30, fontWeight: 900, margin: "0 0 6px", letterSpacing: "-0.04em", color: "var(--text-1)" }}>{brand.name}</h1>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--text-3)" }}>
@@ -484,9 +674,12 @@ export default function BrandMatchPage() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Güven</div>
                 <div style={{ fontSize: 22, fontWeight: 900, color: GRADE_COLOR[confidence.grade], letterSpacing: "-0.04em" }}>{confidence.grade} · {confidence.overall}</div>
               </div>
-              <div style={{ padding: "8px 16px", borderRadius: 10, background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)" }}>
+              <div style={{ padding: "8px 16px", borderRadius: 10, background: reportStatus === "partial_no_creators" ? "rgba(245,158,11,0.08)" : "rgba(99,102,241,0.08)", border: `1px solid ${reportStatus === "partial_no_creators" ? "rgba(245,158,11,0.25)" : "rgba(99,102,241,0.2)"}` }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Creator</div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: "#6366F1", letterSpacing: "-0.04em" }}>{creators.length}</div>
+                {reportStatus === "partial_no_creators"
+                  ? <div style={{ fontSize: 13, fontWeight: 900, color: "#F59E0B", letterSpacing: "-0.02em", lineHeight: 1.25 }}>Yetersiz<br />Havuz</div>
+                  : <div style={{ fontSize: 22, fontWeight: 900, color: "#6366F1", letterSpacing: "-0.04em" }}>{creators.length}</div>
+                }
               </div>
             </div>
             <button onClick={() => { setState("landing"); setResult(null); }} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", background: "var(--bg-subtle)", color: "var(--text-2)", border: "1px solid var(--line)" }}>
@@ -518,8 +711,8 @@ export default function BrandMatchPage() {
               {websiteEvidence.responseTimeMs && <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}>Yanıt süresi: {websiteEvidence.responseTimeMs}ms</div>}
               {websiteEvidence.fetchError && <div style={{ fontSize: 10, color: "var(--red)", lineHeight: 1.5 }}>{websiteEvidence.fetchError}</div>}
               {websiteEvidence.language && <div style={{ fontSize: 10, color: "var(--text-3)" }}>Dil: <strong style={{ color: "var(--text-2)" }}>{websiteEvidence.language}</strong></div>}
-              {websiteEvidence.fetchStatus !== "success" && (
-                <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 6, fontStyle: "italic" }}>Web kanıtı yok — analiz Bilinen Marka Profili veya Taksonomi bazlı</div>
+              {websiteEvidence.fetchStatus !== "success" && websiteEvidence.fetchError && (
+                <div style={{ fontSize: 10, color: "var(--red)", marginTop: 6, fontStyle: "italic" }}>{websiteEvidence.fetchError}</div>
               )}
               {websiteEvidence.aiUsed && (
                 <div style={{ marginTop: 8, padding: "4px 8px", borderRadius: 6, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.2)" }}>
@@ -625,6 +818,18 @@ export default function BrandMatchPage() {
             {GENOME_LABELS.map(({ key, label }) => {
               const dim = evidenceGenome[key as keyof typeof evidenceGenome] as GenomeDimensionScore | undefined;
               if (!dim || typeof dim !== "object") return null;
+
+              if (dim.basis === "Taxonomy Fallback") {
+                return (
+                  <div key={key} style={{ padding: "7px 10px", background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--line)", opacity: 0.42 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)" }}>{label}</span>
+                      <span style={{ fontSize: 9, color: "var(--text-3)", fontStyle: "italic" }}>Web kanıtı yok</span>
+                    </div>
+                  </div>
+                );
+              }
+
               const basisColor = BASIS_COLOR[dim.basis] || "var(--text-3)";
               return (
                 <div key={key} style={{ padding: "8px 10px", background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--line)", borderLeft: `3px solid ${basisColor}` }}>
@@ -717,14 +922,41 @@ export default function BrandMatchPage() {
       </div>
 
       {/* ── Top Creator Matches table ── */}
-      <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", overflow: "hidden", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: `1px solid ${reportStatus === "partial_no_creators" ? "rgba(245,158,11,0.3)" : "var(--line)"}`, overflow: "hidden", marginBottom: 16 }}>
         <div style={{ padding: "18px 22px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <SectionTitle icon={Star} title="Top Creator Matches" sub={creators.length > 0 ? `${creators.length} creator · Genome Compatibility™ ile sıralandı` : "Creator veritabanında veri yok"} />
+          <SectionTitle icon={Star} title="Top Creator Matches" sub={reportStatus === "partial_no_creators" ? `Creator havuzu yetersiz (${creators.length}/${MIN_CREATOR_POOL} minimum)` : creators.length > 0 ? `${creators.length} creator · Genome Compatibility™ ile sıralandı` : "Creator veritabanında veri yok"} color={reportStatus === "partial_no_creators" ? "#F59E0B" : undefined} />
           {genomeCreator && (
             <button onClick={() => setGenomeCreator(null)} style={{ fontSize: 11, color: "var(--text-3)", background: "var(--bg-subtle)", border: "1px solid var(--line)", borderRadius: 7, padding: "4px 10px", cursor: "pointer" }}>Genome karşılaştırmayı temizle</button>
           )}
         </div>
-        {creators.length === 0 ? (
+        {reportStatus === "partial_no_creators" ? (
+          <div style={{ padding: "36px 28px" }}>
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", padding: "20px 22px", borderRadius: 12, background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.2)", marginBottom: 16 }}>
+              <AlertTriangle size={20} color="#F59E0B" style={{ flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#F59E0B", marginBottom: 6 }}>Creator Havuzu Yetersiz — Tablo Gösterilmiyor</div>
+                <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.65 }}>
+                  Güvenilir bir Top Creator Matches tablosu için en az <strong>{MIN_CREATOR_POOL} creator</strong> gerekir.
+                  Şu anda veritabanında yalnızca <strong>{creators.length} creator</strong> var.
+                  Sahte ya da yetersiz veriye dayalı creator önerisi üretilmedi.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[
+                `Minimum creator havuzu: ${MIN_CREATOR_POOL} · Mevcut: ${creators.length}`,
+                "Creator eşleşmesi Discovery veya Analysis modülünde analiz edilen influencer'lardan oluşur.",
+                "Daha fazla influencer analiz ettikçe bu tablo otomatik olarak dolar.",
+                "Rapor geri kalan tüm bölümleri (Brand DNA, Audience, Genome) doğrulanmış veriyle sunmaya devam eder.",
+              ].map((t, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6 }}>
+                  <span style={{ flexShrink: 0, color: "#F59E0B", fontWeight: 800 }}>·</span>
+                  {t}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : creators.length === 0 ? (
           <div style={{ padding: "40px 22px", textAlign: "center" }}>
             <Brain size={28} style={{ display: "block", margin: "0 auto 10px", opacity: 0.25 }} color="var(--text-3)" />
             <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>Creator verisi yok</div>
@@ -850,7 +1082,7 @@ export default function BrandMatchPage() {
       </div>
 
       {/* ── Portfolio + Overlap ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      {verifiedReport && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
 
         {/* Portfolio */}
         <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "20px 22px" }}>
@@ -907,10 +1139,10 @@ export default function BrandMatchPage() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* ── Mismatch Warnings ── */}
-      {mismatches.length > 0 && (
+      {verifiedReport && mismatches.length > 0 && (
         <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid rgba(239,68,68,0.2)", padding: "20px 22px", marginBottom: 16 }}>
           <SectionTitle icon={XCircle} title={`Brand Mismatch Tespiti (${mismatches.length})`} sub="Yüksek takipçili ancak düşük brand uyumlu creator'lar" color="var(--red)" />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -952,7 +1184,7 @@ export default function BrandMatchPage() {
       {/* ── Insights + Risks + Opportunities ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 16 }}>
         <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "18px 20px" }}>
-          <SectionTitle icon={Lightbulb} title="AI İçgörüleri" color="#6366F1" />
+          <SectionTitle icon={Lightbulb} title={websiteEvidence?.aiUsed ? "AI İçgörüleri" : "Marka İçgörüleri"} color="#6366F1" />
           {insights.map((ins, i) => (
             <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, color: "var(--text-2)", lineHeight: 1.55, marginBottom: 10 }}>
               <span style={{ color: "#6366F1", flexShrink: 0 }}>›</span> {ins}

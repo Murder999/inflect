@@ -16,6 +16,15 @@
 import type { DiscoveryCard } from "@/lib/api";
 import { BRAND_TAXONOMY } from "@/lib/simulation-engine";
 
+// ── Report Guard Constants ──────────────────────────────────────────────────────
+export const MIN_CREATOR_POOL = 20;
+
+export type BrandMatchReportStatus =
+  | "verified"                   // web evidence OK + creator pool >= MIN_CREATOR_POOL
+  | "partial_no_creators"        // web evidence OK but < MIN_CREATOR_POOL
+  | "insufficient_web_evidence"  // fetch failed / no web data
+  | "taxonomy_only";             // brand found in taxonomy but no web fetch
+
 // ── Exported Types ──────────────────────────────────────────────────────────────
 
 export type MarketTier    = "Luxury" | "Premium" | "Mid-Market" | "Mass Market" | "Value";
@@ -243,6 +252,8 @@ export interface BrandMatchResult {
   creatorCoverage: CreatorCoverage;
   targetMarket:    string;
   competitorUrl?:  string;
+  reportStatus:    BrandMatchReportStatus;
+  verifiedReport:  boolean;
 }
 
 // ── URL → Brand Lookup ──────────────────────────────────────────────────────────
@@ -1010,8 +1021,8 @@ export function computeCreatorMatchScore(
   const fraud = card.fraud_score || 30;
   const riskLevel: RiskLevel = fraud >= 70 ? "High" : fraud >= 45 ? "Medium" : "Low";
 
-  const isMismatch = scores.final < 45 || (card.followers >= 500_000 && scores.genomeCompatibility < 40);
-  const mismatchReason = isMismatch
+  const scoreMismatch = scores.final < 45 || (card.followers >= 500_000 && scores.genomeCompatibility < 40);
+  const scoreMismatchReason = scoreMismatch
     ? fraud >= 70
       ? `Yüksek fraud riski (${fraud}) — marka güvenilirliği tehdit altında.`
       : scores.genomeCompatibility < 40
@@ -1019,20 +1030,32 @@ export function computeCreatorMatchScore(
       : `Düşük kategori uyumu (${scores.categoryRelevance}/100) ve kitle uyumsuzluğu — yüksek takipçi yanıltıcı olabilir.`
     : "";
 
-  const whySelected = buildWhySelected(card, profile, scores, persona, genomeAlignment, isMismatch);
-
   const countryName = (card.country || "").toLowerCase();
   const tmAliases: Record<string, string[]> = {
-    "turkey":  ["türk", "turkey"],
-    "usa":     ["united states", "usa"],
-    "uk":      ["uk", "britain"],
-    "germany": ["germany", "deutsch"],
+    "turkey":  ["türk", "turkey", "türkiye"],
+    "usa":     ["united states", "usa", "us", "america"],
+    "uk":      ["united kingdom", "uk", "britain", "england"],
+    "germany": ["germany", "deutschland", "german"],
   };
   const tmKey = (targetMarket || "global").toLowerCase();
   const countryMatchBool = tmKey === "global"
     ? false
     : (tmAliases[tmKey] || [tmKey]).some(a => countryName.includes(a));
 
+  // Country exclusion: non-Global target market + creator doesn't match → mark as mismatch
+  const countryMismatch =
+    !!targetMarket &&
+    targetMarket !== "Global" &&
+    !countryMatchBool;
+
+  const isMismatch = scoreMismatch || countryMismatch;
+  const mismatchReason = countryMismatch
+    ? (card.country || "").trim()
+      ? `Ülke uyumsuzluğu: ${card.country} ≠ Hedef pazar (${targetMarket})`
+      : `Ülke verisi yok — hedef pazar (${targetMarket}) için doğrulanamadı`
+    : scoreMismatchReason;
+
+  const whySelected = buildWhySelected(card, profile, scores, persona, genomeAlignment, isMismatch);
   const topMatchReasons = getTopMatchReasons(scores, persona, countryMatchBool);
 
   return { card, tier, persona, scores, creatorGenome, genomeAlignment, whySelected, riskLevel, isMismatch, mismatchReason, topMatchReasons };
@@ -1286,6 +1309,17 @@ export function runBrandMatchAnalysis(
   const summary      = buildSummary(profile, scored, genome, confidence);
   const dataSourceNotes = buildDataNotes(profile, scored);
 
+  const hasWebEvidence = options?.websiteEvidence?.fetchStatus === "success";
+  const hasEnoughCreators = unique.length >= MIN_CREATOR_POOL;
+
+  const reportStatus: BrandMatchReportStatus = !hasWebEvidence
+    ? "insufficient_web_evidence"
+    : !hasEnoughCreators
+    ? "partial_no_creators"
+    : "verified";
+
+  const verifiedReport = reportStatus === "verified";
+
   return {
     brand: profile, genome, tone, audience,
     creators: scored, portfolio, overlap, mismatches, expansions, confidence,
@@ -1293,17 +1327,24 @@ export function runBrandMatchAnalysis(
     analyzedUrl: url, creatorsFromDB: rawCreators.length,
     websiteEvidence, evidenceGenome, creatorCoverage,
     targetMarket, competitorUrl,
+    reportStatus, verifiedReport,
   };
 }
 
 // ── Narrative Builders ──────────────────────────────────────────────────────────
 
 function buildSummary(profile: BrandProfile, creators: MatchedCreator[], genome: BrandGenome, conf: BrandMatchConfidence): string {
-  const top3 = genome.topTraits.slice(0, 3).join(", ").toLowerCase();
+  const top3  = genome.topTraits.slice(0, 3).join(", ").toLowerCase();
   const count = creators.length;
   const avg   = count > 0 ? Math.round(creators.reduce((s, c) => s + c.scores.final, 0) / count) : 0;
 
-  return `${profile.name}, ${profile.industry} sektöründe ${profile.marketTier.toLowerCase()} segment konumlamasıyla faaliyet göstermektedir. Marka DNA'sı en güçlü şekilde ${top3} boyutlarında öne çıkmaktadır. ${count > 0 ? `${count} creator analiz edildi; ortalama AI Brand Match skoru ${avg}/100.` : "Creator veritabanı henüz yeterli veri içermiyor — güven analizi teorik çerçevede gerçekleştirildi."} Güven seviyesi: ${conf.grade} (${conf.overall}/100). Revenue, ROAS ve Conversion tahminleri bu raporda yer almaz.`;
+  const creatorNote = count === 0
+    ? "Creator veritabanı henüz yeterli veri içermiyor — güven analizi teorik çerçevede gerçekleştirildi."
+    : count < MIN_CREATOR_POOL
+    ? `Creator havuzu yetersiz (${count}/${MIN_CREATOR_POOL} minimum) — eşleşme özeti üretilmedi. Daha fazla influencer analiz edin.`
+    : `${count} creator analiz edildi; ortalama Genome Compat. skoru ${avg}/100.`;
+
+  return `${profile.name}, ${profile.industry} sektöründe ${profile.marketTier.toLowerCase()} segment konumlamasıyla faaliyet göstermektedir. Marka DNA'sı en güçlü şekilde ${top3} boyutlarında öne çıkmaktadır. ${creatorNote} Güven seviyesi: ${conf.grade} (${conf.overall}/100). Revenue, ROAS ve Conversion tahminleri bu raporda yer almaz.`;
 }
 
 function buildInsights(profile: BrandProfile, creators: MatchedCreator[], genome: BrandGenome, conf: BrandMatchConfidence): string[] {
@@ -1342,15 +1383,27 @@ function buildOpportunities(profile: BrandProfile, creators: MatchedCreator[], e
 }
 
 function buildNextActions(profile: BrandProfile, creators: MatchedCreator[], conf: BrandMatchConfidence): string[] {
-  const out: string[] = [
-    `En yüksek Brand Match skorlu 5 creator'ı belirle ve önce engagement test kampanyası yap.`,
-    `${conf.grade === "D" || conf.grade === "C" ? "Creator veritabanını genişlet — daha iyi eşleşme için daha fazla analiz gerekli." : "Portföydeki high-match creator'larla ilk iletişimi başlat."}`,
-    "Genome Compatibility ≥75 olan creator'ları Campaign Intelligence'e aktar ve bütçe simülasyonu yap.",
-    "Mismatch olarak işaretlenen creator'larla ortaklık yapmaktan kaçın — marka DNA'sı ile uyumsuz.",
-    "Üç aylık içerik takvimi oluştur — sezonluk kampanyalar ve ürün lansmanlarını creator'larla planlı yürüt.",
+  const hasEnoughCreators = creators.length >= MIN_CREATOR_POOL;
+
+  const creatorSteps: string[] = hasEnoughCreators
+    ? [
+        `En yüksek Brand Match skorlu 5 creator'ı belirle ve önce engagement test kampanyası yap.`,
+        conf.grade === "D" || conf.grade === "C"
+          ? "Creator veritabanını genişlet — daha iyi eşleşme için daha fazla analiz gerekli."
+          : "Portföydeki high-match creator'larla ilk iletişimi başlat.",
+        "Genome Compatibility ≥75 olan creator'ları Campaign Intelligence'e aktar ve bütçe simülasyonu yap.",
+        "Mismatch olarak işaretlenen creator'larla ortaklık yapmaktan kaçın — marka DNA'sı ile uyumsuz.",
+      ]
+    : [
+        `Discovery veya Analysis bölümünde influencer analizi başlat — creator eşleşmesi için minimum ${MIN_CREATOR_POOL} creator gerekli (şu an: ${creators.length}).`,
+        "Önce hedef pazarınızla uyumlu influencer'ları platform üzerinden tarayın ve analiz ettirin.",
+      ];
+
+  return [
+    ...creatorSteps,
+    "Üç aylık içerik takvimi oluştur — sezonluk kampanyalar ve ürün lansmanlarını planlı yürüt.",
     "Her kampanya sonunda gerçek engagement ve reach verilerini kaydet — gelecekteki tahminlerin güvenilirliği artar.",
   ];
-  return out;
 }
 
 function buildDataNotes(profile: BrandProfile, creators: MatchedCreator[]): string[] {

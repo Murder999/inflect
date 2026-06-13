@@ -36,15 +36,19 @@ from app.models.competitor_intelligence import (
     CompetitorProfile, CompetitorCampaignSignal, CompetitorReportCache,
 )
 
-# ── Risk Radar (Part 15) ──────────────────────────────────────────────────────
+# ── Risk Radar (Part 15 + 17) ────────────────────────────────────────────────
 from app.models.risk_radar import (
-    InfluencerRiskReport, RiskAlert,
+    InfluencerRiskReport, RiskAlert, RiskScanLog,
+    AlertStatus, AlertSource,
 )
 
 # ── Intelligence Billing (Part 16) ───────────────────────────────────────────
 from app.models.intelligence_billing import (
     IntelligenceFeature, IntelligenceUsageLog, UsageStatus,
 )
+
+# ── Brand Analysis (Part 22) ──────────────────────────────────────────────────
+from app.models.brand_analysis import BrandAnalysisSnapshot
 
 __all__ = [
     "User", "PlanType",
@@ -64,6 +68,8 @@ __all__ = [
     "InfluencerDigitalTwin", "TwinForecast", "TwinSignal",
     "ConfidenceLevel", "RiskTrend", "StabilityTrend", "CampaignReadiness",
     "CompetitorProfile", "CompetitorCampaignSignal", "CompetitorReportCache",
-    "InfluencerRiskReport", "RiskAlert",
+    "InfluencerRiskReport", "RiskAlert", "RiskScanLog",
+    "AlertStatus", "AlertSource",
     "IntelligenceFeature", "IntelligenceUsageLog", "UsageStatus",
+    "BrandAnalysisSnapshot",
 ]

@@ -29,6 +29,7 @@ from app.core.deps import get_current_user
 from app.models.user import User
 from app.models.influencer_archive import InfluencerProfile
 from app.models.risk_radar import RiskAlert
+from app.services.entitlement_service import check_feature_access, get_locked_response_body
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,17 @@ def _report_to_dict(result) -> dict:
         "limitations":      result.limitations,
         "note":             result.note,
     }
+
+
+def _redact_evidence(report_dict: dict, locked_meta: dict) -> dict:
+    """Replace evidence fields with locked metadata for users without advanced_risk_radar."""
+    report_dict["anomaly_events"] = []
+    report_dict["evidence_summary"] = []
+    for dim in report_dict.get("dimensions", {}).values():
+        dim["signals"] = []
+    report_dict["evidence_locked"] = True
+    report_dict["evidence_locked_meta"] = locked_meta
+    return report_dict
 
 
 def _determine_report_mode(snapshot_count: int, window_days: int, resolution_source: str = "archive") -> str:
@@ -221,6 +233,11 @@ async def scan_by_query(
     report_dict = _report_to_dict(result)
     report_dict["report_mode"] = actual_mode
 
+    # Redact evidence for users without advanced_risk_radar entitlement
+    evidence_access = await check_feature_access(db, user, "advanced_risk_radar")
+    if not evidence_access.allowed:
+        report_dict = _redact_evidence(report_dict, get_locked_response_body(evidence_access))
+
     return {
         "ok":                  True,
         "report":              report_dict,
@@ -300,6 +317,10 @@ async def scan_influencer(
     report_dict = _report_to_dict(result)
     report_dict["report_mode"] = actual_mode
 
+    evidence_access = await check_feature_access(db, user, "advanced_risk_radar")
+    if not evidence_access.allowed:
+        report_dict = _redact_evidence(report_dict, get_locked_response_body(evidence_access))
+
     return {
         "ok":                True,
         "report":            report_dict,
@@ -331,18 +352,31 @@ async def get_report(
             detail="Bu profil için henüz risk raporu üretilmemiş. POST /risk-radar/scan ile başlatın.",
         )
 
-    return {"ok": True, "report": _report_to_dict(result)}
+    report_dict = _report_to_dict(result)
+    evidence_access = await check_feature_access(db, user, "advanced_risk_radar")
+    if not evidence_access.allowed:
+        report_dict = _redact_evidence(report_dict, get_locked_response_body(evidence_access))
+    return {"ok": True, "report": report_dict}
 
 
 @router.get("/alerts")
 async def get_alerts(
-    resolved: bool = Query(False),
-    limit:    int  = Query(20, ge=1, le=100),
-    db:       AsyncSession = Depends(get_db),
-    user:     User = Depends(get_current_user),
+    status:   Optional[str] = Query(None, description="open|acknowledged|dismissed|resolved"),
+    severity: Optional[str] = Query(None, description="low|medium|high|critical"),
+    limit:    int            = Query(20, ge=1, le=100),
+    db:       AsyncSession   = Depends(get_db),
+    user:     User           = Depends(get_current_user),
 ):
-    """List recent risk alerts. 0 credits."""
-    q = select(RiskAlert).where(RiskAlert.resolved == resolved)
+    """List recent risk alerts filtered by status/severity. 0 credits."""
+    q = select(RiskAlert)
+    if status:
+        q = q.where(RiskAlert.status == status)
+    else:
+        # Default: non-resolved alerts
+        q = q.where(RiskAlert.status.notin_(["resolved", "dismissed"]))
+    if severity:
+        q = q.where(RiskAlert.severity == severity)
+
     res = await db.execute(q.order_by(desc(RiskAlert.created_at)).limit(limit))
     alerts = list(res.scalars().all())
 
@@ -351,14 +385,25 @@ async def get_alerts(
         "count":  len(alerts),
         "alerts": [
             {
-                "id":         a.id,
-                "profile_id": a.profile_id,
-                "alert_type": a.alert_type,
-                "severity":   a.severity,
-                "message":    a.message,
-                "details":    a.details,
-                "resolved":   a.resolved,
-                "created_at": a.created_at.isoformat(),
+                "id":              a.id,
+                "profile_id":      a.profile_id,
+                "alert_type":      a.alert_type,
+                "severity":        a.severity,
+                "status":          a.status,
+                "source":          a.source,
+                "platform":        a.platform,
+                "message":         a.message,
+                "explanation":     a.explanation,
+                "previous_score":  a.previous_score,
+                "current_score":   a.current_score,
+                "delta":           a.delta,
+                "details":         a.details,
+                "evidence":        a.evidence or [],
+                "acknowledged_by": a.acknowledged_by,
+                "acknowledged_at": a.acknowledged_at.isoformat() if a.acknowledged_at else None,
+                "resolved_at":     a.resolved_at.isoformat() if a.resolved_at else None,
+                "created_at":      a.created_at.isoformat(),
+                "updated_at":      a.updated_at.isoformat() if a.updated_at else None,
             }
             for a in alerts
         ],

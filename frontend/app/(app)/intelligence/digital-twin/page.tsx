@@ -21,6 +21,7 @@ import {
 } from "@/lib/influencers-api";
 import { authApi } from "@/lib/api";
 import ProfileAvatar from "@/components/ProfileAvatar";
+import FeatureGate from "@/components/premium/FeatureGate";
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
 
@@ -827,6 +828,11 @@ export default function DigitalTwinPage() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
+    <FeatureGate
+      featureKey="digital_twin_forecast"
+      title="Digital Twin™ Forecast"
+      message="Influencer'ın gelecek performansını AI ile simüle et. Takipçi büyüme projeksiyonu, engagement trendi ve brand-fit uyumu. Agency planı gereklidir."
+    >
     <div style={{ padding: "28px 32px", maxWidth: 1100, margin: "0 auto" }}>
 
       {/* Page header */}
@@ -1207,5 +1213,6 @@ export default function DigitalTwinPage() {
         </div>
       )}
     </div>
+    </FeatureGate>
   );
 }

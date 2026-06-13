@@ -48,7 +48,7 @@ function StatusDot({ status }: { status: string }) {
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 type Tab = "dashboard" | "customers" | "billing" | "packages" | "intelligence"
-         | "churn" | "costs" | "health" | "queue" | "abuse" | "tickets" | "logs";
+         | "churn" | "costs" | "health" | "queue" | "abuse" | "tickets" | "logs" | "schema";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "dashboard",    label: "Dashboard",        icon: "⬡" },
@@ -59,6 +59,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "churn",        label: "Churn Tahmini",    icon: "↓" },
   { key: "costs",        label: "API Maliyeti",     icon: "₿" },
   { key: "health",       label: "Provider Sağlık",  icon: "♡" },
+  { key: "schema",       label: "DB Schema",        icon: "◈" },
   { key: "queue",        label: "Kuyruk Monitor",   icon: "◑" },
   { key: "abuse",        label: "Kötüye Kullanım",  icon: "!" },
   { key: "tickets",      label: "Destek",           icon: "✉" },
@@ -106,6 +107,7 @@ export default function AdminPage() {
     churn:        "/admin/churn-risks",
     costs:        "/admin/cost-center",
     health:       "/admin/health-check",
+    schema:       "/admin/health/migrations",
     queue:        "/admin/queue-monitor",
     abuse:        "/admin/abuse-detection",
     tickets:      "/admin/tickets",
@@ -506,6 +508,96 @@ export default function AdminPage() {
                   <Link href="/admin/agents/runs" style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, background: "var(--bg-subtle)", border: "1px solid var(--line)", color: "var(--text-2)", textDecoration: "none" }}>Run Logs</Link>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ── SCHEMA ── */}
+          {tab === "schema" && !loading && data && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Status banner */}
+              <div style={{
+                padding: "16px 20px", borderRadius: 12,
+                background: data.schema_ready ? "var(--green-bg)" : "var(--red-bg)",
+                border: `1px solid ${data.schema_ready ? "var(--green)" : "var(--red)"}30`,
+                display: "flex", alignItems: "center", gap: 12,
+              }}>
+                <span style={{ fontSize: 22 }}>{data.schema_ready ? "✓" : "⚠"}</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: data.schema_ready ? "var(--green)" : "var(--red)" }}>
+                    {data.schema_ready ? "Veritabanı şeması hazır" : "Şema sorunu tespit edildi"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 2 }}>
+                    {data.is_up_to_date
+                      ? `Alembic güncel — ${data.current_revision ?? "revision yok"}`
+                      : `Bekleyen migration var — mevcut: ${data.current_revision ?? "yok"}, beklenen: ${data.expected_head}`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                {[
+                  { l: "Mevcut Revision",  v: data.current_revision ?? "—" },
+                  { l: "Beklenen Head",    v: data.expected_head },
+                  { l: "Tablo Sayısı",     v: data.existing_table_count ?? "—" },
+                ].map(({ l, v }) => (
+                  <div key={l} className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{l}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Missing tables/indexes */}
+              {((data.missing_tables?.length ?? 0) > 0 || (data.missing_indexes?.length ?? 0) > 0) && (
+                <div className="card" style={{ padding: 18, border: "1px solid var(--red)" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--red)", marginBottom: 12 }}>Eksikler</div>
+                  {(data.missing_tables ?? []).length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>EKSİK TABLOLAR</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {(data.missing_tables ?? []).map((t: string) => (
+                          <code key={t} style={{ fontSize: 11, padding: "2px 8px", background: "var(--red-bg)", color: "var(--red)", borderRadius: 5 }}>{t}</code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(data.missing_indexes ?? []).length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>EKSİK İNDEXLER</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {(data.missing_indexes ?? []).map(([tbl, idx]: [string, string]) => (
+                          <code key={idx} style={{ fontSize: 11, padding: "2px 8px", background: "var(--red-bg)", color: "var(--red)", borderRadius: 5 }}>{tbl}.{idx}</code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fix commands */}
+              {data.action_required && (
+                <div className="card" style={{ padding: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 10 }}>Düzeltme Komutu</div>
+                  <pre style={{ margin: 0, padding: "12px 14px", background: "var(--bg-subtle)", borderRadius: 8, fontSize: 12, overflow: "auto" }}>
+                    {data.current_revision
+                      ? `cd backend\nalembic stamp ${data.current_revision}\nalembic upgrade head`
+                      : `cd backend\nalembic upgrade head`}
+                  </pre>
+                </div>
+              )}
+
+              {/* Link to detail */}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Link href="/admin/risk-alerts?tab=migration" style={{ fontSize: 12, color: "var(--brand-600)", textDecoration: "none" }}>
+                  Detaylı şema sayfasına git →
+                </Link>
+              </div>
+            </div>
+          )}
+          {tab === "schema" && !loading && !data && (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>
+              Migration durumu yüklenemedi — backend bağlantısını kontrol edin.
             </div>
           )}
 

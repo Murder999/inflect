@@ -1,3 +1,283 @@
+# TODO_NEXT — Part 22 Post-Audit: Taxonomy Leak Removal & Creator Pool Safe Reporting (2026-06-13)
+
+## ✅ Post-Audit'de Tamamlanan
+
+- [x] `brand-match-engine.ts`: `buildSummary()` — pool < 20 iken ortalama skor gösterilmiyor ("Creator havuzu yetersiz N/20")
+- [x] `brand-match-engine.ts`: `buildNextActions()` — creator referanslı next steps pool < 20 iken filtreleniyor
+- [x] `page.tsx`: DNA Boyutları — `basis === "Taxonomy Fallback"` dimensionlar skor göstermez, opacity 0.42 placeholder ("Web kanıtı yok")
+- [x] `page.tsx`: Rapor header Creator badge — `reportStatus === "partial_no_creators"` → "Yetersiz Havuz" (amber)
+- [x] `page.tsx`: "AI İçgörüleri" → "Marka İçgörüleri" (`websiteEvidence?.aiUsed !== true` durumunda)
+- [x] `brand_match.py`: `BrandMatchAnalyzeResponse` + `_MIN_CREATOR_POOL = 20` + `brand_dna_ready`, `ai_enrichment_ready`, `min_creator_pool` alanları
+- [x] `api.ts`: `BrandMatchAnalyzeResponse` tip güncellemesi
+- [x] `test_brand_analysis.py`: `TestSectionReadiness` (9 test) → toplam 44/44 PASSED ✅
+- [x] TypeScript `tsc --noEmit`: 0 hata ✅
+- [x] `npm run build`: 38/38 sayfa ✅
+
+---
+
+# TODO_NEXT — Part 22 Post: AI Brand Match Backend Real Data Extraction (2026-06-13)
+
+## ✅ Part 22'de Tamamlanan
+
+- [x] `backend/app/services/brand_domain_resolver.py` (YENİ) — httpx TLD probing, URL/domain/bare-name sınıflandırma, .com>.com.tr tercihi, concurrent asyncio.gather
+- [x] `backend/app/services/brand_website_fetcher.py` (YENİ) — httpx 8s fetch, 1MB cap, title/meta/OG/h1/h2/snippets/social extraction, evidence_quality
+- [x] `backend/app/models/brand_analysis.py` (YENİ) — `BrandAnalysisSnapshot` model
+- [x] `backend/app/api/v1/routes/brand_match.py` (YENİ) — `POST /api/v1/intelligence/brand-match/analyze`, auth, resolve→fetch→persist→response
+- [x] `backend/alembic/versions/0006_part22_brand_ai.py` (YENİ) — brand_analysis_snapshots migration (≤32 chars ✓)
+- [x] `backend/app/models/__init__.py` — BrandAnalysisSnapshot import
+- [x] `backend/app/main.py` — brand_match router kayıt, version 10.4.0
+- [x] `backend/app/api/v1/routes/admin_intelligence.py` — `_EXPECTED_HEAD` → `0006_part22_brand_ai`
+- [x] `backend/app/services/entitlement_service.py` — `advanced_brand_match` feature (Pro+)
+- [x] `backend/tests/test_migration_health.py` — part22 assertion güncellendi
+- [x] `backend/tests/test_brand_analysis.py` (YENİ) — 35 test: resolver, HTML extraction, quality, fetch failures, plan redaction, no-taxonomy guards
+- [x] `frontend/lib/api.ts` — BrandMatchEvidenceResponse, BrandMatchAnalyzeRequest/Response, brandMatchApi.analyze()
+- [x] `frontend/app/(app)/intelligence/brand-match/page.tsx` — backend entegrasyonu, domain_unresolved UI, backend evidence mapping, locked_sections state
+- [x] TypeScript `tsc --noEmit`: 0 hata ✅
+- [x] `npm run build`: 38/38 sayfa ✅
+- [x] `tests/test_brand_analysis.py` → 35/35 PASSED ✅
+- [x] `tests/test_migration_health.py` → 7/7 PASSED ✅
+
+## 🔜 Part 22 Sonrası — Sonraki Adımlar
+
+### AI Brand Match Geliştirmeleri
+- Domain resolver için arama provider entegrasyonu (Google Custom Search, Bing Search API): bare brand names için daha doğru çözümleme
+- `BRAND_ANALYSIS_PROVIDER` env var ile AI enrichment (tone/audience sinyalleri) — Next.js API route'u zaten destekliyor
+- Frontend: `locked_sections` içindeki bölümlere `PremiumLockedCard` gösterimi
+- `POST /api/v1/intelligence/brand-match/history` — kullanıcının önceki analizleri
+- Brand evidence refresh (yenileme butonu → backend yeniden fetch)
+
+### Social Profile Verification
+- Sosyal link extraction sonrası resmi profil doğrulaması
+- Instagram/TikTok hesabının gerçekten o markaya ait olduğunu verify et
+
+### Campaign Intelligence Live Provider
+- `campaign_discovery_service.discover_campaign_creators()` → Apify/YouTube Data API live discovery
+- `AGENTS_MODE=live` iken gerçek provider kullan
+
+### Admin Brand Analytics
+- `/admin/intelligence` → Brand Analysis sekmesi: kullanıcı başına analiz sayısı, resolver başarı oranı, evidence quality dağılımı
+
+---
+
+# TODO_NEXT — Part 21 Post: AI Brand Match No-Fallback Guard (2026-06-13)
+
+## ✅ Part 21'de Tamamlanan
+
+- [x] `frontend/lib/brand-match-engine.ts` — `MIN_CREATOR_POOL = 20`, `BrandMatchReportStatus` tipi, `reportStatus` + `verifiedReport` alanları, ülke mismatch dışlaması (`isMismatch = true`)
+- [x] `frontend/app/(app)/intelligence/brand-match/page.tsx` — `looksLikeDomain()` TLD kontrolü, `fetch_failed` PageState, `failedEvidence` state, `runAnalysis()` çift koruma, `fetch_failed` tam hata ekranı (yeniden deneme formu dahil), `reportStatus` bağlı başlık badge, `partial_no_creators` creator havuzu uyarı paneli, `verifiedReport` koşullu Portfolio/Overlap/Mismatch bölümleri
+- [x] TypeScript `tsc --noEmit`: 0 hata ✅
+- [x] `npm run build`: 38/38 sayfa ✅
+
+---
+
+# TODO_NEXT — Part 20 Post: Campaign Intelligence Provider-Backed Discovery & Entitlement-Safe Report Engine (2026-06-13)
+
+## ✅ Part 20'de Tamamlanan
+
+- [x] `backend/app/services/campaign_discovery_service.py` (YENİ) — DataCompleteness gate (< 60% → excluded, 60-75% → low_confidence, ≥ 75% → normal), confidence-weighted power-law bütçe optimizer, `BUDGET_CAP_LOW_CONF = 0.15`, provider-gated discovery (`insufficient_verified_data` when 0 pass gate)
+- [x] `backend/app/models/campaign.py` — 6 yeni kolon: `report_source`, `data_confidence`, `provider_status`, `discovery_sources`, `report_generated_at`, `redaction_level`
+- [x] `backend/app/api/v1/routes/campaigns.py` — `_determine_redaction()`, `_to_dict()` server-side redaction, `_strip_roi_details()`, `POST /campaigns/discover` endpoint, `locked_sections` format
+- [x] `backend/alembic/versions/0005_part20_campaign_report_metadata.py` — migration + backfill (simulation_result IS NOT NULL → client_simulation_preview)
+- [x] `backend/tests/test_campaign_intelligence.py` (YENİ) — 28 pytest testi (5 class): TestComputeCompleteness, TestCompletenessLevel, TestDetermineRedaction, TestToDictRedaction, TestStripRoiDetails
+- [x] `frontend/lib/simulation-engine.ts` — `DataCompletenessLevel`, eşik sabitleri, `qualityScore: number | null` (null when excluded), `SimResultV2` yeni alanlar (`excludedFromPortfolio`, `reportSource`), null-safe `avgQuality`
+- [x] `frontend/lib/api.ts` — `CampaignReportSource`, `CampaignRedactionLevel`, `LockedSection` tipleri, `Campaign` 7 yeni alan, `CampaignDiscoverRequest`, `DiscoveredCreator`, `CampaignDiscoveryResponse`, `campaignsApi.discover()`
+- [x] `frontend/app/(app)/campaigns/simulate/page.tsx` — `completenessLabel` badge'leri, `~EST` kaldırıldı, `excludedFromPortfolio` uyarı banner'ı, `reportSource` badge, `saveAsCampaign()` yeni alanlar
+- [x] `frontend/app/(app)/campaigns/[id]/page.tsx` — `PremiumLockedBanner` komponenti, `report_source` + `redaction_level` badge'leri, completeness banner'ları, null-safe qualityScore
+- [x] `README_PROGRESS.md` — Part 20 bölümü eklendi
+- [x] TypeScript `tsc --noEmit`: 0 hata ✅
+
+## ✅ Alembic Revision ID Fix (2026-06-13) — TAMAMLANDI
+
+- [x] 0003 revision → `0003_part18_plans` (35→17 karakter)
+- [x] 0004 revision → `0004_part19_campaign_sim` (38→24 karakter)
+- [x] 0005 revision → `0005_part20_campaign_meta` (36→25 karakter)
+- [x] `_EXPECTED_HEAD` → `0005_part20_campaign_meta` (admin_intelligence.py + test)
+- [x] `requirements-dev.txt` oluşturuldu (pytest + pytest-asyncio)
+- [x] `alembic upgrade head` hatasız: 0002→0003→0004→0005 ✓
+- [x] `alembic current` = `0005_part20_campaign_meta (head)` ✓
+- [x] `tests/test_campaign_intelligence.py` → 28/28 PASSED ✓
+- [x] `tests/test_migration_health.py` → 7/7 PASSED ✓
+
+**Kural:** Gelecekte yeni revision ID'ler 32 karakter sınırını aşmamalı:
+```bash
+alembic revision --autogenerate -m "açıklama" --rev-id "0006_part21_kısa"
+```
+
+## 🔜 Part 20 Sonrası — Hemen Yapılması Gerekenler
+
+## 🔜 Part 21 Adayları
+
+### Provider Discovery Gerçek Entegrasyon
+- `campaign_discovery_service.discover_campaign_creators()` şu an sınırlı DB sorgusu yapıyor
+- Apify / YouTube Data API ile gerçek creator discovery (`AGENTS_MODE=live` iken)
+- `discovery_sources` alanına provider listesi yazılmalı (örn. `["apify_instagram", "youtube_api"]`)
+
+### Campaign Report PDF Export
+- Agency+ plan kullanıcıları için `/campaigns/{id}/export/pdf` endpoint
+- `white_label_export` locked section kaldırılır (agency+)
+- jinja2 + weasyprint veya reportlab ile PDF üretimi
+
+### Campaign Status Flow
+- `draft` → `active` → `completed` → `archived` durum geçişleri
+- `PUT /campaigns/{id}/status` endpoint
+- Frontend: status badge tıklanınca dropdown geçiş formu
+
+### Admin Campaign Analytics
+- `/admin/campaigns/stats` — toplam kampanya sayısı, plan dağılımı, report_source dağılımı
+- Ortalama data_confidence per plan
+- En çok excluded creator olan kampanyalar
+
+### Creator Enrichment Pipeline
+- Archive'daki düşük completeness creator'lar için arka plan zenginleştirme görevi
+- Scheduler'da günlük `enrich_low_completeness_creators()` task'ı
+- Tamamlandığında campaign portfolio'larının güncellenmesi
+
+---
+
+# TODO_NEXT — Part 19 Post: Campaign Intelligence Hardening Sonrası (2026-06-13)
+
+## ✅ Part 19'da Tamamlanan
+
+- [x] `frontend/app/(app)/campaigns/[id]/page.tsx` — Campaign detail sayfası oluşturuldu, 404 "Kampanyayı Gör" hatası çözüldü
+- [x] `frontend/lib/api.ts` — `DiscoveryCard.source?: string`, `Campaign.simulation_result`, `CampaignCreateBody.simulation_result` alanları eklendi
+- [x] `frontend/lib/simulation-engine.ts` — `DataCompleteness` tipi + `computeCreatorQualityScore()` completeness desteği + `buildDataSourceNotes()` arşiv/minimal sayıları
+- [x] `frontend/app/(app)/campaigns/simulate/page.tsx` — `saveAsCampaign()` tam simulation_result gönderiyor, veri kalitesi banner'ları + `~EST` badge
+- [x] `backend/app/models/campaign.py` — `simulation_result` JSON kolonu
+- [x] `backend/app/api/v1/routes/campaigns.py` — simulation_result DB'ye kaydediliyor
+- [x] `backend/alembic/versions/0004_part19_campaign_simulation_result.py` — migration
+- [x] TypeScript tsc --noEmit: 0 hata ✅
+- [x] npm run build: başarılı ✅ (`/campaigns/[id]` dynamic route görünüyor)
+
+## 🔜 Part 20 Adayları
+
+### Backend Tests — Campaign Intelligence
+- `backend/tests/test_campaign_intelligence.py` — eksik testler:
+  - Kampanya create simulation_result kaydeder
+  - Kampanya detail simulation_result döndürür
+  - Kalite skoru 49'a default olmuyor (veri varsa)
+  - Bütçe dağılımı naive eşit split değil
+
+### Alembic — Migration Doğrulama
+- `alembic upgrade head` çalıştır (0004 migration)
+- `GET /admin/health/migrations` → `schema_ready: true` doğrula
+
+### Creator Data Quality Improvement
+- Arşiv creator'larına ülke/kategori bilgisi zenginleştirmesi admin panelinden
+- Import sırasında eksik alanları zorunlu kılma (country, category)
+- DataCompleteness < "complete" olan profilleri admin listesi
+
+### Campaign Portfolio Quality Gate
+- Tüm creator'ları `minimal` veri kalitesiyle olan kampanyalarda uyarı gönder
+- Minimum güven skoru altındaki kampanyalar için "Daha Fazla Analiz Yap" yönlendirmesi
+
+---
+
+# TODO_NEXT — Part 18 Post: Entitlement System Sonrası (2026-06-13)
+
+## ✅ Part 18'de Tamamlanan
+
+- [x] `PlanType` enum'a AGENCY + ENTERPRISE eklendi
+- [x] `entitlement_service.py` — 26 feature key, plan-bazlı kontrol, require_feature() dependency
+- [x] `routes/entitlements.py` — /pricing/plans, /entitlements/me, /events/premium, /admin/plans/* endpoint'leri
+- [x] `digital_twin.py`, `competitor_intelligence.py` — require_feature() guard'ları
+- [x] `risk_radar.py` — evidence redaction (anomaly_events + signals gizlenir, evidence_locked_meta döner)
+- [x] `main.py` — 6 paket seed (non-destructive upsert), entitlements router
+- [x] Alembic migration: `0003_part18_agency_enterprise_plans.py`
+- [x] 20 backend entitlement testi
+- [x] `frontend/lib/api.ts` — FeatureLockedDetail, FeatureLockedError, isFeatureLockedError
+- [x] `frontend/lib/entitlements-api.ts` — entitlementsApi client
+- [x] `frontend/components/premium/*` — PlanBadge, UpgradeModal, PremiumLockedCard, FeatureGate, UsageLimitBanner
+- [x] `frontend/app/pricing/page.tsx` — 5 plan, aylık/yıllık toggle, özellik karşılaştırma tablosu
+- [x] `frontend/app/(app)/dashboard/page.tsx` — UsageLimitBanner + kilitli modüller grid
+- [x] `AppShell.tsx` — Plan lock badge'leri (AGENCY/PRO gerektiren nav items)
+- [x] `intelligence/digital-twin` + `competitor-intelligence` — FeatureGate sarması
+- [x] TypeScript tsc --noEmit: 0 hata ✅
+- [x] npm run build: başarılı ✅
+
+## 🔜 Part 19 Adayları
+
+### Alembic — Canlı Ortam Doğrulaması
+- `alembic upgrade head` çalıştır
+- `GET /admin/health/migrations` endpoint'ini doğrula (schema_ready: true)
+- PlanType enum migration'ı PostgreSQL'de test et
+
+### Admin Plan Yönetim UI
+- `/admin` → "Planlar & Özellikler" tab'ı ekle
+- Feature matrix görünümü (plan × özellik)
+- Plan fiyat/kredi düzenleme formu
+- `PUT /admin/plans/{slug}/features` ve `PUT /admin/plans/{slug}/limits` endpoint'lerini bağla
+
+### Stripe Entegrasyonu
+- Stripe checkout session oluşturma
+- Webhook handler: plan yükseltme/düşürme, kredi yenileme
+- `invalidateEntitlementCache()` webhook sonrası tetikleme
+
+### Analysis Detail Premium Sections
+- Analiz detay sayfasına kilitli bölümler ekle (evidence, ROI prediction, audience quality)
+- `isFeatureLockedError` + `PremiumLockedCard` pattern'i kullan
+
+### Risk Alert Notification
+- HIGH/CRITICAL alert oluştuğunda admin e-posta bildirimi
+
+---
+
+# TODO_NEXT — Güncel Durum (2026-06-13 Post-Audit) ✅
+
+## ✅ Post-Audit Session'da Tamamlanan
+
+- [x] `risk_radar.py` `GET /risk-radar/alerts` — `RiskAlert.resolved` AttributeError kritik fix
+- [x] `lib/risk-radar-api.ts` — RiskAlert interface 20 alana güncellendi, AlertStatus/AlertSource tipleri
+- [x] `app/(app)/admin/risk-alerts/page.tsx` — Yeni tam yönetim sayfası (3 tab)
+- [x] `AppShell.tsx` — Admin nav Risk Alertler linki + fonksiyonel global arama formu
+- [x] `app/(app)/admin/page.tsx` — DB Schema tab (migration health)
+- [x] `app/(app)/admin/intelligence/page.tsx` — Tarama Logları tab
+- [x] `lib/api.ts` — `request<T>()` export edildi
+- [x] Local `request`/`apiFetch` fonksiyonları kaldırıldı (3 dosya) → merkezi `lib/api.ts` kullanımı
+
+## 🔜 Part 18 Adayları
+
+### Risk Alert Notification
+- HIGH/CRITICAL alert oluştuğunda admin e-posta bildirimi
+- Event bus: `risk.alert.created` → CEO Agent routing
+
+### Alembic — Docker Entegrasyonu
+- `docker-compose.yml`'ye `alembic upgrade head` startup komutu ekle
+
+### Gerçek Ortamda Doğrulama
+- `docker compose up` ile `alembic upgrade head` çalıştır
+- Mevcut DB varsa `alembic stamp 0001_initial_full_schema && alembic upgrade head`
+- `GET /admin/health/migrations` endpoint'inin `schema_ready: true` döndürdüğünü doğrula
+
+### Scheduled Scan Geliştirmeleri
+- Scan interval'i env var ile yapılandırılabilir hale getir (`RISK_SCAN_INTERVAL_SECONDS`)
+- Failed profile raporlama geliştirilmesi
+
+---
+
+# TODO_NEXT — Part 17: Database Integrity + Scheduled Risk Scanning + Risk Alert Backend ✅ + Sonrası
+
+## ✅ Part 17'de Tamamlanan
+
+- [x] `alembic.ini` — Alembic yapılandırması (sıfırdan kurulum)
+- [x] `alembic/env.py` — Async-compatible env (create_async_engine + NullPool + asyncio.run)
+- [x] `alembic/script.py.mako` — Şablon dosyası
+- [x] `alembic/versions/0001_initial_full_schema.py` — Parts 1-16 baseline (30 tablo, doğru sıralı)
+- [x] `alembic/versions/0002_part17_risk_alert_extended.py` — RiskAlert genişletme + RiskScanLog + 5 index + veri migrasyonu
+- [x] `models/risk_radar.py` — AlertStatus/AlertSource enum, RiskAlert 11 yeni alan, RiskScanLog model
+- [x] `models/__init__.py` — Yeni model/enum importları
+- [x] `services/risk_alert_service.py` — create_or_update_alert (dedup), acknowledge/dismiss/resolve, list_alerts, alert_to_dict
+- [x] `services/risk_radar/engine.py` — _check_and_create_alerts() risk_alert_service'i kullanır
+- [x] `services/risk_scan_scheduler.py` — start/stop scanner, daily loop, batch scan, per-profile isolation, NOT_CHARGED logging
+- [x] `api/v1/routes/risk_alerts.py` — Admin CRUD (list, get, acknowledge, dismiss, resolve)
+- [x] `api/v1/routes/admin_intelligence.py` — GET /admin/health/migrations, GET /admin/health/scan-logs, POST /admin/risk-scan/trigger
+- [x] `main.py` — risk_alerts router, risk_scan_scheduler startup/shutdown, version v9.0.0
+- [x] `tests/__init__.py` — Test package init
+- [x] `tests/test_risk_alert_service.py` — 14 test (dedup, lifecycle, dict shape, permissions)
+- [x] `tests/test_migration_health.py` — 7 test (sabitleri, response shape, non-admin 403)
+- [x] `tests/test_risk_scan_scheduler.py` — 7 test (dedup, source, idempotency, enum values)
+
+---
+
 # TODO_NEXT — Part 16 Final Hardening ✅ + Sonrası
 
 ## ✅ Part 16 Final'de Tamamlanan

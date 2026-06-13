@@ -1,3 +1,32 @@
+// ── Feature locked error ──────────────────────────────────────────────────────
+
+export interface FeatureLockedDetail {
+  error_code:       "FEATURE_LOCKED";
+  feature_key:      string;
+  required_plan:    string;
+  current_plan:     string;
+  upgrade_title:    string;
+  upgrade_message:  string;
+  preview_available: boolean;
+  cta_label:        string;
+  cta_url:          string;
+}
+
+export class FeatureLockedError extends Error {
+  readonly lockedDetail: FeatureLockedDetail;
+  constructor(detail: FeatureLockedDetail) {
+    super(detail.upgrade_message || "Bu özellik mevcut planınızda kullanılamaz.");
+    this.name = "FeatureLockedError";
+    this.lockedDetail = detail;
+  }
+}
+
+export function isFeatureLockedError(e: unknown): e is FeatureLockedError {
+  return e instanceof FeatureLockedError;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const API_BASE =
   (typeof window !== "undefined"
     ? (window as any).__NEXT_PUBLIC_API_URL
@@ -18,7 +47,7 @@ function getToken(): string | null {
  *   - 401 → logout + yönlendirme
  *   - 4xx/5xx → server'dan gelen detail mesajı
  */
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -67,7 +96,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (res.status === 403) {
-    throw new Error("Bu işlem için yetkiniz yok.");
+    let detail403: any;
+    try { detail403 = await res.json(); } catch { /* ignore */ }
+    if (detail403?.detail?.error_code === "FEATURE_LOCKED") {
+      const e = new FeatureLockedError(detail403.detail);
+      throw e;
+    }
+    throw new Error(
+      typeof detail403?.detail === "string"
+        ? detail403.detail
+        : "Bu işlem için yetkiniz yok."
+    );
   }
 
   if (res.status === 404) {
@@ -252,6 +291,11 @@ export const campaignsApi = {
       `/campaigns/${campaignId}/add-influencer?analysis_id=${analysisId}`,
       { method: "POST" }
     ),
+  discover: (body: CampaignDiscoverRequest) =>
+    request<CampaignDiscoveryResponse>("/campaigns/discover", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 // ─── Alerts ───
@@ -514,6 +558,7 @@ export interface DiscoveryCard {
   created_at: string;
   similarity?: number;
   similarity_reason?: string;
+  source?: string;
 }
 
 export interface DiscoverySections {
@@ -566,6 +611,20 @@ export interface WatchlistItem {
   added_at: string;
 }
 
+export type CampaignReportSource =
+  | "server_provider_discovery"
+  | "client_simulation_preview"
+  | "insufficient_data";
+
+export type CampaignRedactionLevel = "none" | "pro" | "basic" | "full";
+
+export interface LockedSection {
+  key:           string;
+  title:         string;
+  required_plan: string;
+  message:       string;
+}
+
 export interface Campaign {
   id: number;
   name: string;
@@ -581,8 +640,17 @@ export interface Campaign {
   analysis_ids: number[];
   recommended_influencers: RecommendedInfluencer[];
   roi_estimates: CampaignROI;
+  simulation_result: Record<string, unknown> | null;
   total_reach: number;
   estimated_budget: number;
+  // Part 20 — report metadata
+  report_source:       CampaignReportSource | null;
+  data_confidence:     "low" | "medium" | "high" | null;
+  provider_status:     "available" | "unavailable" | "partial" | null;
+  discovery_sources:   string[] | null;
+  report_generated_at: string | null;
+  redaction_level:     CampaignRedactionLevel | null;
+  locked_sections:     LockedSection[];
   created_at: string;
   updated_at: string;
 }
@@ -597,6 +665,55 @@ export interface CampaignCreateBody {
   target_audience?: string;
   goal?: string;
   notes?: string;
+  simulation_result?: Record<string, unknown> | null;
+  // Part 20 — report metadata
+  report_source?:     CampaignReportSource;
+  data_confidence?:   "low" | "medium" | "high";
+  provider_status?:   "available" | "unavailable" | "partial";
+  discovery_sources?: string[];
+}
+
+export interface CampaignDiscoverRequest {
+  name:           string;
+  brand?:         string;
+  platform?:      string;
+  budget?:        number;
+  category?:      string;
+  target_country?: string;
+  goal?:          string;
+  notes?:         string;
+}
+
+export interface DiscoveredCreator {
+  username:             string;
+  platform:             string;
+  followers:            number;
+  engagement_rate:      number;
+  final_score:          number | null;
+  quality_score:        number | null;
+  completeness_pct:     number;
+  completeness_level:   "normal" | "low_confidence" | "excluded";
+  missing_fields:       string[];
+  allocated_budget:     number;
+  budget_pct:           number;
+  budget_cap_applied:   boolean;
+  country:              string;
+  category:             string;
+}
+
+export interface CampaignDiscoveryResponse {
+  status:           "ok" | "insufficient_verified_data" | "provider_unavailable";
+  report_source:    CampaignReportSource;
+  data_confidence:  "low" | "medium" | "high" | null;
+  provider_status:  "available" | "unavailable" | "partial";
+  total_candidates: number;
+  excluded_count:   number;
+  selected_count:   number;
+  creators:         DiscoveredCreator[];
+  budget_allocated: number;
+  discovery_sources: string[];
+  generated_at:     string;
+  campaign_id?:     number;
 }
 
 export interface RecommendedInfluencer {
@@ -1065,3 +1182,62 @@ export interface ArchiveProfile {
     decision: string;
   }[];
 }
+
+// ── Brand Match API Types (Part 22) ──────────────────────────────────────────
+
+export interface BrandMatchEvidenceResponse {
+  url: string;
+  fetchStatus: "success" | "failed" | "timeout" | "blocked" | "invalid_url";
+  fetchError?: string;
+  httpStatus?: number;
+  finalUrl?: string;
+  responseTimeMs?: number;
+  pageTitle?: string;
+  metaDescription?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  h1s: string[];
+  h2s: string[];
+  bodySnippets: string[];
+  keywordHints: string[];
+  socialLinks: string[];
+  language?: string;
+  aiUsed: boolean;
+  targetMarket?: string;
+  evidenceQuality: "strong" | "moderate" | "weak" | "none";
+}
+
+export interface BrandMatchAnalyzeRequest {
+  input: string;
+  target_market?: string;
+}
+
+export interface BrandMatchAnalyzeResponse {
+  analysis_id?: number;
+  input: string;
+  resolved_domain?: string;
+  resolved_url?: string;
+  resolver_status: "resolved" | "domain_unresolved" | "ambiguous_domain";
+  resolver_confidence: "high" | "medium" | "low";
+  resolver_note?: string;
+  fetch_status: "success" | "failed" | "timeout" | "blocked" | "not_attempted";
+  report_status: "verified" | "domain_unresolved" | "fetch_failed" | "insufficient_web_evidence";
+  verified_report: boolean;
+  evidence?: BrandMatchEvidenceResponse;
+  domain_candidates: { domain: string; url: string; confidence: string }[];
+  locked_sections: string[];
+  redaction_level: string;
+  user_message?: string;
+  // Section readiness (Post-Audit)
+  brand_dna_ready: boolean;
+  ai_enrichment_ready: boolean;
+  min_creator_pool: number;
+}
+
+export const brandMatchApi = {
+  analyze: (body: BrandMatchAnalyzeRequest): Promise<BrandMatchAnalyzeResponse> =>
+    request<BrandMatchAnalyzeResponse>("/intelligence/brand-match/analyze", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+};

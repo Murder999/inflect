@@ -1,0 +1,5 @@
+# Test-only dependencies — not installed in production image
+# Install with: pip install -r requirements-dev.txt
+# Run tests with: python -m pytest tests/ -v
+pytest==8.3.4
+pytest-asyncio==0.25.3

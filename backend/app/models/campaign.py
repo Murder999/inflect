@@ -42,6 +42,21 @@ class Campaign(Base):
     recommended_influencers: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     roi_estimates: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
 
+    # Campaign Intelligence simulation result (full SimResultV2 snapshot)
+    simulation_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+
+    # Campaign report metadata (Part 20)
+    report_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
+    # server_provider_discovery | client_simulation_preview | insufficient_data
+    data_confidence: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
+    # low | medium | high
+    provider_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default=None)
+    # available | unavailable | partial
+    discovery_sources: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
+    report_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    redaction_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
+    # none | basic | full
+
     # Performans verileri
     total_reach: Mapped[int] = mapped_column(Integer, default=0)
     total_views: Mapped[int] = mapped_column(Integer, default=0)

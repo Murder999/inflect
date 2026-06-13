@@ -1,5 +1,5 @@
 """
-Admin Intelligence Billing Routes — Part 16
+Admin Intelligence Billing Routes — Part 16 + Part 17 Migration Health
 
 GET  /admin/intelligence/features          — list all features
 PATCH /admin/intelligence/features/{slug}  — update feature config
@@ -297,3 +297,187 @@ async def test_provider(
         "last_checked_at": result.last_checked_at,
         "notes":         result.notes,
     }
+
+
+# ── Migration Health Endpoints (Part 17) ─────────────────────────────────────
+
+# Expected Alembic head revision for Part 22
+_EXPECTED_HEAD = "0006_part22_brand_ai"
+
+# Critical tables that must exist for the application to function
+_CRITICAL_TABLES = [
+    "users", "analyses", "campaigns", "agents", "agent_tasks",
+    "influencer_profiles", "influencer_snapshots",
+    "influencer_digital_twins", "twin_forecasts",
+    "competitor_profiles", "competitor_campaign_signals",
+    "influencer_risk_reports", "risk_alerts", "risk_scan_logs",
+    "intelligence_features", "intelligence_usage_logs",
+]
+
+# Critical indexes for performance
+_CRITICAL_INDEXES = [
+    ("risk_alerts", "ix_risk_alerts_status"),
+    ("risk_alerts", "ix_risk_alerts_severity"),
+    ("risk_alerts", "ix_risk_alerts_source"),
+    ("influencer_risk_reports", "ix_influencer_risk_reports_profile_id"),
+    ("intelligence_usage_logs", "ix_intelligence_usage_logs_feature_slug"),
+]
+
+
+@router.get("/admin/health/migrations")
+async def get_migration_health(
+    db:           AsyncSession  = Depends(get_db),
+    current_user: User          = Depends(get_current_user),
+):
+    """
+    Admin only: Alembic migration status and schema readiness.
+
+    Returns:
+      - current_revision   : currently applied Alembic revision (or null if none)
+      - expected_head      : revision this application requires
+      - is_up_to_date      : True when current == expected
+      - missing_tables     : critical tables not found in DB
+      - missing_indexes    : critical indexes not found in DB
+      - schema_ready       : True when all critical tables and indexes exist
+      - checked_at         : ISO timestamp of this check
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin yetkisi gereklidir.")
+
+    from sqlalchemy import text, inspect
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    # ── 1. Read current Alembic revision ──────────────────────────────────────
+    current_revision: Optional[str] = None
+    alembic_table_exists = False
+    try:
+        rev_res = await db.execute(
+            text("SELECT version_num FROM alembic_version LIMIT 1")
+        )
+        row = rev_res.fetchone()
+        current_revision = row[0] if row else None
+        alembic_table_exists = True
+    except Exception:
+        # alembic_version table doesn't exist → migrations never run
+        current_revision = None
+        alembic_table_exists = False
+
+    # ── 2. Check critical tables ──────────────────────────────────────────────
+    missing_tables: list[str] = []
+    existing_tables: list[str] = []
+    try:
+        def _get_tables(conn):
+            from sqlalchemy import inspect as sa_inspect
+            insp = sa_inspect(conn)
+            return insp.get_table_names()
+
+        tables = await db.run_sync(_get_tables)
+        for t in _CRITICAL_TABLES:
+            if t in tables:
+                existing_tables.append(t)
+            else:
+                missing_tables.append(t)
+    except Exception as exc:
+        logger.warning("Migration health: table check failed: %s", exc)
+        missing_tables = _CRITICAL_TABLES[:]
+
+    # ── 3. Check critical indexes ─────────────────────────────────────────────
+    missing_indexes: list[dict] = []
+    try:
+        def _get_indexes(conn):
+            from sqlalchemy import inspect as sa_inspect
+            insp = sa_inspect(conn)
+            result = {}
+            for table in existing_tables:
+                result[table] = [idx["name"] for idx in insp.get_indexes(table)]
+            return result
+
+        index_map = await db.run_sync(_get_indexes)
+        for table, idx_name in _CRITICAL_INDEXES:
+            if table not in index_map or idx_name not in index_map.get(table, []):
+                missing_indexes.append({"table": table, "index": idx_name})
+    except Exception as exc:
+        logger.warning("Migration health: index check failed: %s", exc)
+
+    is_up_to_date = (current_revision == _EXPECTED_HEAD)
+    schema_ready  = (not missing_tables and not missing_indexes)
+
+    return {
+        "ok":               True,
+        "current_revision": current_revision,
+        "expected_head":    _EXPECTED_HEAD,
+        "is_up_to_date":    is_up_to_date,
+        "alembic_table_exists": alembic_table_exists,
+        "missing_tables":   missing_tables,
+        "missing_indexes":  missing_indexes,
+        "schema_ready":     schema_ready,
+        "existing_table_count": len(existing_tables),
+        "checked_at":       checked_at,
+        "action_required":  (
+            None if (is_up_to_date and schema_ready)
+            else (
+                "Run: alembic upgrade head"
+                if not is_up_to_date
+                else "Schema has missing tables/indexes — check migration logs"
+            )
+        ),
+    }
+
+
+@router.get("/admin/health/scan-logs")
+async def get_scan_logs(
+    limit:        int  = Query(20, ge=1, le=100),
+    db:           AsyncSession = Depends(get_db),
+    current_user: User         = Depends(get_current_user),
+):
+    """Admin only: recent risk scan logs."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin yetkisi gereklidir.")
+
+    from app.models.risk_radar import RiskScanLog
+    from sqlalchemy import desc
+
+    res = await db.execute(
+        select(RiskScanLog).order_by(desc(RiskScanLog.started_at)).limit(limit)
+    )
+    logs = list(res.scalars().all())
+    return {
+        "ok":    True,
+        "count": len(logs),
+        "logs": [
+            {
+                "id":                 l.id,
+                "started_at":         l.started_at.isoformat() if l.started_at else None,
+                "completed_at":       l.completed_at.isoformat() if l.completed_at else None,
+                "trigger_source":     l.trigger_source,
+                "profiles_scanned":   l.profiles_scanned,
+                "profiles_succeeded": l.profiles_succeeded,
+                "profiles_failed":    l.profiles_failed,
+                "alerts_created":     l.alerts_created,
+                "alerts_updated":     l.alerts_updated,
+                "error_message":      l.error_message,
+            }
+            for l in logs
+        ],
+    }
+
+
+@router.post("/admin/risk-scan/trigger")
+async def trigger_risk_scan(
+    current_user: User = Depends(get_current_user),
+):
+    """Admin only: manually trigger a full risk scan immediately."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin yetkisi gereklidir.")
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.risk_scan_scheduler import trigger_risk_scan_now
+
+    try:
+        summary = await trigger_risk_scan_now(AsyncSessionLocal)
+        return {"ok": True, "summary": summary}
+    except Exception as exc:
+        logger.error("Manual risk scan trigger failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Tarama başlatılamadı: {exc}")

@@ -4,34 +4,7 @@
  * Adds query-based scan (archive-independent) and feature cost lookup.
  */
 
-const API_BASE =
-  (typeof window !== "undefined" ? (window as any).__NEXT_PUBLIC_API_URL : undefined) ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8000/api/v1";
-
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("access_token");
-}
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const json = await res.json();
-      detail = json.detail ?? json.message ?? detail;
-    } catch {}
-    throw new Error(detail);
-  }
-  return res.json();
-}
+import { request } from "./api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -129,15 +102,29 @@ export interface FeatureCostInfo {
   costs:         { limited: number; standard: number; full: number };
 }
 
+export type AlertStatus = "open" | "acknowledged" | "dismissed" | "resolved";
+export type AlertSource = "scheduled_scan" | "manual_scan" | "campaign_monitor";
+
 export interface RiskAlert {
-  id:         number;
-  profile_id: number;
-  alert_type: string;
-  severity:   RiskLevel;
-  message:    string;
-  details:    Record<string, unknown> | null;
-  resolved:   boolean;
-  created_at: string;
+  id:              number;
+  profile_id:      number;
+  alert_type:      string;
+  severity:        RiskLevel;
+  status:          AlertStatus;
+  source:          AlertSource | null;
+  platform:        string | null;
+  message:         string;
+  explanation:     string | null;
+  previous_score:  number | null;
+  current_score:   number | null;
+  delta:           number | null;
+  details:         Record<string, unknown> | null;
+  evidence:        string[];
+  acknowledged_by: number | null;
+  acknowledged_at: string | null;
+  resolved_at:     string | null;
+  created_at:      string;
+  updated_at:      string | null;
 }
 
 // ── API Client ────────────────────────────────────────────────────────────────
@@ -191,13 +178,19 @@ export const riskRadarApi = {
     ),
 
   /** List recent risk alerts. */
-  getAlerts: (
-    resolved = false,
-    limit = 20
-  ): Promise<{ ok: boolean; count: number; alerts: RiskAlert[] }> =>
-    request<{ ok: boolean; count: number; alerts: RiskAlert[] }>(
-      `/risk-radar/alerts?resolved=${resolved}&limit=${limit}`
-    ),
+  getAlerts: (params?: {
+    status?:   AlertStatus;
+    severity?: RiskLevel;
+    limit?:    number;
+  }): Promise<{ ok: boolean; count: number; alerts: RiskAlert[] }> => {
+    const q = new URLSearchParams();
+    if (params?.status)   q.set("status",   params.status);
+    if (params?.severity) q.set("severity", params.severity);
+    if (params?.limit)    q.set("limit",    String(params.limit));
+    return request<{ ok: boolean; count: number; alerts: RiskAlert[] }>(
+      `/risk-radar/alerts?${q}`
+    );
+  },
 
   /** Admin: list high-risk profiles. */
   getHighRisk: (

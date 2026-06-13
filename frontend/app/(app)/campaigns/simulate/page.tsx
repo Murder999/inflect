@@ -358,15 +358,27 @@ export default function SimulatePage() {
     if (!result || !config.product.trim()) return;
     setSaving(true);
     try {
+      // Serialize simulation result — strip circular refs via JSON round-trip
+      let simResultPayload: Record<string, unknown> | null = null;
+      try {
+        simResultPayload = JSON.parse(JSON.stringify(result));
+      } catch {
+        simResultPayload = null;
+      }
+
       const r = await campaignsApi.create({
-        name:           config.name || `${config.product} — ${GOAL_META[config.goal].label}`,
-        platform:       config.platform === "all" ? "instagram" : config.platform,
-        category:       config.category || result.campaignProfile.primaryCategory,
-        target_country: config.country  || undefined,
-        goal:           config.goal,
-        budget:         config.budget,
-        brand:          config.product,
-        notes:          result.summary.slice(0, 500),
+        name:              config.name || `${config.product} — ${GOAL_META[config.goal].label}`,
+        platform:          config.platform === "all" ? "instagram" : config.platform,
+        category:          config.category || result.campaignProfile.primaryCategory,
+        target_country:    config.country  || undefined,
+        goal:              config.goal,
+        budget:            config.budget,
+        brand:             config.product,
+        notes:             result.summary.slice(0, 500),
+        simulation_result: simResultPayload,
+        report_source:     result.reportSource,
+        data_confidence:   result.confidence.grade === "A" ? "high" : result.confidence.grade === "D" ? "low" : "medium",
+        provider_status:   result.creatorsFromDB > 0 ? "available" : "unavailable",
       });
       setSavedId(r.campaign?.id || null);
     } catch (e: unknown) {
@@ -622,7 +634,7 @@ export default function SimulatePage() {
 
   const perfData = result.creators.map(c => ({
     name:    `@${c.card.username.slice(0, 10)}`,
-    quality: c.qualityScore,
+    quality: c.qualityScore ?? 0,
     reach:   Math.round(c.estimatedReach.expected / 1000),
     budget:  Math.round(c.budgetPct),
   }));
@@ -634,9 +646,17 @@ export default function SimulatePage() {
       <div style={{ background: "linear-gradient(135deg,var(--bg-elevated),rgba(16,185,129,0.04))", borderRadius: 16, border: "1px solid var(--line)", padding: "24px 28px", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
           <div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: "var(--green-bg)", border: "1px solid rgba(16,185,129,0.2)", marginBottom: 10 }}>
-              <CheckCircle size={11} color="var(--green)" />
-              <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)" }}>Intelligence Report · {new Date().toLocaleDateString("tr-TR")}</span>
+            <div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 10 }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: "var(--green-bg)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                <CheckCircle size={11} color="var(--green)" />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)" }}>Intelligence Report · {new Date().toLocaleDateString("tr-TR")}</span>
+              </div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)" }}>
+                <Info size={10} color="#6366F1" />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#6366F1" }}>
+                  {result.reportSource === "client_simulation_preview" ? "Simülasyon Önizleme" : "Doğrulanmış Veri Yok"}
+                </span>
+              </div>
             </div>
             <h1 style={{ fontSize: 26, fontWeight: 800, margin: "0 0 8px", letterSpacing: "-0.04em", color: "var(--text-1)" }}>
               {config.name || `${config.product} Kampanya Analizi`}
@@ -665,6 +685,29 @@ export default function SimulatePage() {
           </div>
         </div>
       </div>
+
+      {/* ── Data quality warnings ── */}
+      {result.excludedFromPortfolio > 0 && (
+        <div style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 10, padding: "12px 16px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <AlertTriangle size={14} color="#F59E0B" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B", marginBottom: 3 }}>Veri Kalitesi Filtresi Uygulandı</div>
+            <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>
+              {result.excludedFromPortfolio} creator, yetersiz veri kalitesi (tamamlama skoru %60 altında) nedeniyle portföye alınmadı.
+              Portföy kalitesini artırmak için Discovery'den gerçek analiz yapın.
+            </div>
+          </div>
+        </div>
+      )}
+      {result.creators.some(c => c.completenessLevel === "low_confidence") && (
+        <div style={{ background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 10, padding: "12px 16px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <Info size={14} color="#6366F1" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>
+            <strong style={{ color: "#6366F1" }}>Düşük Güven Creator:</strong> Bazı creator'lar (%60–%75 veri tamamlama) portföyde yer alıyor ancak bütçenin en fazla %15&apos;i tahsis edildi.
+            Daha yüksek bütçe payı için Discovery&apos;den tam analiz yapın.
+          </div>
+        </div>
+      )}
 
       {/* ── Confidence + Feasibility Row ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -803,11 +846,21 @@ export default function SimulatePage() {
                         </td>
                         <td style={{ padding: "11px 12px" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <div style={{ height: 3, width: 44, background: "var(--bg-muted)", borderRadius: 99, overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${c.qualityScore}%`, background: c.qualityScore >= 70 ? "var(--green)" : c.qualityScore >= 50 ? "#F59E0B" : "var(--red)", borderRadius: 99 }} />
-                            </div>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: c.qualityScore >= 70 ? "var(--green)" : c.qualityScore >= 50 ? "#F59E0B" : "var(--red)" }}>{c.qualityScore}</span>
+                            {c.qualityScore !== null ? (
+                              <>
+                                <div style={{ height: 3, width: 44, background: "var(--bg-muted)", borderRadius: 99, overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: `${c.qualityScore}%`, background: c.qualityScore >= 70 ? "var(--green)" : c.qualityScore >= 50 ? "#F59E0B" : "var(--red)", borderRadius: 99 }} />
+                                </div>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: c.qualityScore >= 70 ? "var(--green)" : c.qualityScore >= 50 ? "#F59E0B" : "var(--red)" }}>{c.qualityScore}</span>
+                              </>
+                            ) : (
+                              <span style={{ fontSize: 11, color: "var(--text-3)" }}>—</span>
+                            )}
+                            {c.completenessLabel && (
+                              <span title={c.completenessLabel === "Düşük Güven" ? "Veri güveni düşük — bütçe %15 ile sınırlı" : "Yetersiz veri — skor hesaplanamadı"} style={{ fontSize: 8, fontWeight: 700, color: c.completenessLabel === "Düşük Güven" ? "#F59E0B" : "var(--red)", background: c.completenessLabel === "Düşük Güven" ? "rgba(245,158,11,0.12)" : "rgba(239,68,68,0.12)", borderRadius: 99, padding: "1px 5px", letterSpacing: "0.04em" }}>{c.completenessLabel}</span>
+                            )}
                           </div>
+                          <div style={{ fontSize: 9, color: "var(--text-3)", marginTop: 2 }}>{c.sourceLabel}</div>
                         </td>
                         <td style={{ padding: "11px 12px" }}>
                           <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 99, background: "rgba(99,102,241,0.12)", color: "#6366F1", display: "inline-block", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.persona}</span>
