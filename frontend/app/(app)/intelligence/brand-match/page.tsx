@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { discoverApi, brandMatchApi, type BrandMatchAnalyzeResponse } from "@/lib/api";
+import { discoverApi, brandMatchApi, discoveryApi, type BrandMatchAnalyzeResponse, type DiscoveryLiveResponse } from "@/lib/api";
 import {
   runBrandMatchAnalysis, BRAND_URL_SUGGESTIONS, MIN_CREATOR_POOL,
   type BrandMatchResult, type MatchedCreator, type BrandWebsiteEvidence,
@@ -231,6 +231,8 @@ export default function BrandMatchPage() {
   const [failedEvidence,   setFailedEvidence]  = useState<BrandWebsiteEvidence | null>(null);
   const [backendResponse,  setBackendResponse] = useState<BrandMatchAnalyzeResponse | null>(null);
   const [lockedSections,   setLockedSections]  = useState<string[]>([]);
+  const [discoveryState,   setDiscoveryState]  = useState<"idle"|"running"|"completed"|"missing">("idle");
+  const [discoveryResult,  setDiscoveryResult] = useState<DiscoveryLiveResponse | null>(null);
 
   // Load history from localStorage
   useEffect(() => {
@@ -350,6 +352,29 @@ export default function BrandMatchPage() {
 
     setResult(res);
     setState("report");
+  }
+
+  async function startLiveDiscovery() {
+    if (!result) return;
+    setDiscoveryState("running");
+    setDiscoveryResult(null);
+    try {
+      const resp = await discoveryApi.startLive({
+        brand_name:    result.brand.name,
+        category:      result.brand.primaryCategory,
+        target_market: targetMarket,
+        platforms:     ["youtube"],
+        limit:         30,
+      });
+      if (resp.status === "provider_missing") {
+        setDiscoveryState("missing");
+      } else {
+        setDiscoveryState("completed");
+      }
+      setDiscoveryResult(resp);
+    } catch {
+      setDiscoveryState("missing");
+    }
   }
 
   // ── LANDING ──────────────────────────────────────────────────────────────────
@@ -962,7 +987,7 @@ export default function BrandMatchPage() {
                 </div>
               </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
               {[
                 `Minimum creator havuzu: ${MIN_CREATOR_POOL} · Mevcut: ${creators.length}`,
                 "Creator eşleşmesi Discovery veya Analysis modülünde analiz edilen influencer'lardan oluşur.",
@@ -975,6 +1000,48 @@ export default function BrandMatchPage() {
                 </div>
               ))}
             </div>
+
+            {/* Live Discovery CTA */}
+            {discoveryState === "idle" && (
+              <button
+                onClick={startLiveDiscovery}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 10, background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "#fff", fontWeight: 800, fontSize: 13, border: "none", cursor: "pointer", letterSpacing: "-0.02em" }}
+              >
+                <Wifi size={15} />
+                Live Influencer Discovery Başlat
+              </button>
+            )}
+            {discoveryState === "running" && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 10, background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)", color: "#6366F1", fontWeight: 700, fontSize: 13 }}>
+                <RefreshCw size={14} />
+                Canlı keşif çalışıyor…
+              </div>
+            )}
+            {discoveryState === "missing" && discoveryResult && (
+              <div style={{ padding: "14px 18px", borderRadius: 10, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)", marginTop: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--red)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <WifiOff size={14} /> Provider Yapılandırılmamış
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 8 }}>{discoveryResult.blocked_reason}</div>
+                {discoveryResult.next_actions.map((a, i) => (
+                  <div key={i} style={{ fontSize: 11, color: "var(--text-3)", paddingLeft: 12, lineHeight: 1.7 }}>· {a}</div>
+                ))}
+              </div>
+            )}
+            {discoveryState === "completed" && discoveryResult && (
+              <div style={{ padding: "14px 18px", borderRadius: 10, background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.2)", marginTop: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#6366F1", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <CheckCircle size={14} /> Discovery Tamamlandı — {discoveryResult.verified_candidates_count} aday bulundu
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
+                  {discoveryResult.candidates.slice(0, 5).map(c => c.display_name || c.handle).join(" · ")}
+                  {discoveryResult.candidates.length > 5 && ` +${discoveryResult.candidates.length - 5} daha`}
+                </div>
+                {discoveryResult.next_actions.map((a, i) => (
+                  <div key={i} style={{ fontSize: 11, color: "var(--text-3)", paddingLeft: 12, lineHeight: 1.7 }}>· {a}</div>
+                ))}
+              </div>
+            )}
           </div>
         ) : creators.length === 0 ? (
           <div style={{ padding: "40px 22px", textAlign: "center" }}>

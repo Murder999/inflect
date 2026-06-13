@@ -50,6 +50,9 @@ from app.models.intelligence_billing import (
 # ── Brand Analysis (Part 22) ──────────────────────────────────────────────────
 from app.models.brand_analysis import BrandAnalysisSnapshot
 
+# ── Live Influencer Discovery (Part 24) ───────────────────────────────────────
+from app.models.influencer_discovery import InfluencerDiscoveryRun, InfluencerDiscoveryCandidate
+
 __all__ = [
     "User", "PlanType",
     "Analysis", "Platform",
@@ -72,4 +75,5 @@ __all__ = [
     "AlertStatus", "AlertSource",
     "IntelligenceFeature", "IntelligenceUsageLog", "UsageStatus",
     "BrandAnalysisSnapshot",
+    "InfluencerDiscoveryRun", "InfluencerDiscoveryCandidate",
 ]

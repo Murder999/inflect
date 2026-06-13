@@ -1,3 +1,47 @@
+# TODO_NEXT — Part 24: Live Influencer Discovery Provider Engine (2026-06-13)
+
+## ✅ Part 24'de Tamamlanan
+
+- [x] Provider abstraction (`base.py`): `DiscoveryQuery`, `CreatorCandidate`, `CreatorEvidence`, `ProviderStatus`, `DiscoveryResult`, `InfluencerDiscoveryProvider` ABC
+- [x] `query_builder.py`: Category/locale/platform tabanlı query oluşturucu
+- [x] `normalizer.py`: Raw provider → `CreatorCandidate`, platform detection, handle extraction
+- [x] `dedupe.py`: platform+handle + profile_url deduplication
+- [x] `scoring.py`: `CandidateScore` with nullable scores; evidence_quality="none" → excluded
+- [x] `cache.py`: `get_cached_candidates()` + `save_candidates_to_cache()` (TTL=24h)
+- [x] `providers/youtube_provider.py`: YouTube Data API v3 (gracefully disabled)
+- [x] `providers/search_provider.py`: Google Custom Search / SerpAPI (gracefully disabled)
+- [x] `providers/social_search_provider.py`: Always disabled, explicit reason
+- [x] `discovery_orchestrator.py`: Full orchestration with mode check, provider run, dedupe, score, cache
+- [x] `models/influencer_discovery.py`: `InfluencerDiscoveryRun` + `InfluencerDiscoveryCandidate`
+- [x] `alembic/versions/0007_part24_live_disc.py`: Migration for discovery tables
+- [x] `routes/influencer_discovery.py`: `POST /live`, `GET /runs/{id}`, `POST /candidates/{id}/enrich`
+- [x] `models/__init__.py`: Discovery model imports
+- [x] `main.py`: influencer_discovery router registered (v10.5)
+- [x] `admin_intelligence.py`: `_EXPECTED_HEAD` updated; discovery tables in `_CRITICAL_TABLES`
+- [x] `campaign_discovery_service.py`: Live discovery hint when archive insufficient
+- [x] `frontend/lib/api.ts`: `discoveryApi`, `DiscoveryLiveRequest/Response`, `DiscoveryCandidateCard`
+- [x] `brand-match/page.tsx`: `startLiveDiscovery()` + "Live Influencer Discovery Başlat" button + 3 UI states
+- [x] `campaigns/simulate/page.tsx`: `startLiveDiscovery()` + CTA when pool < 20 + discovery UI states
+- [x] `tests/test_influencer_discovery.py`: 32 tests → 32/32 ✅
+- [x] `tests/test_brand_analysis.py`: 55/55 ✅ (no regression)
+- [x] `npm run typecheck`: 0 errors ✅
+
+## ⏳ Part 24 Sonrası Açık İşler
+
+### Deployment / Konfigürasyon
+- [ ] `INFLUENCER_DISCOVERY_MODE=search_only` veya `live` set edilmeli (şu an `disabled`)
+- [ ] YouTube provider için `YOUTUBE_API_KEY` env var eklenmeli
+- [ ] Arama provider için `SEARCH_API_KEY` + `SEARCH_PROVIDER=google_custom_search` veya `serpapi` eklenmeli
+- [ ] `alembic upgrade head` çalıştırılmalı (0007_part24_live_disc migration)
+
+### Potansiyel Geliştirmeler (Part 25+)
+- [ ] Enrich sonrası candidates'ı Brand Match creator pool'una ekleme
+- [ ] `/influencers/discover/live` async task ile background discovery
+- [ ] Admin paneline discovery run dashboard
+- [ ] Campaign Simulate'ten discovery başlatıldığında creator havuzu otomatik yenileme
+
+---
+
 # TODO_NEXT — Part 22 Final Patch: Section-Level Readiness Gating (2026-06-13)
 
 ## ✅ Final Patch'de Tamamlanan

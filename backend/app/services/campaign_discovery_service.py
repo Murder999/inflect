@@ -359,6 +359,31 @@ def _optimize_budget(
     return allocations
 
 
+# ── Live discovery integration helpers ────────────────────────────────────────
+
+def _live_discovery_available() -> bool:
+    """Return True if live discovery providers are configured."""
+    try:
+        from app.core.config import settings
+        mode = getattr(settings, "INFLUENCER_DISCOVERY_MODE", "disabled").lower()
+        return mode in ("search_only", "live")
+    except Exception:
+        return False
+
+
+def _live_discovery_hint(brief: "CampaignBrief") -> str:
+    """Return a hint message about live discovery when archive is insufficient."""
+    if _live_discovery_available():
+        return (
+            "Live discovery providers yapılandırıldı — "
+            "POST /api/v1/influencers/discover/live çağrısıyla gerçek zamanlı creator arayışı başlatın."
+        )
+    return (
+        "Provider bağlantılarını kontrol edin veya kriterleri genişletin. "
+        "Live discovery için INFLUENCER_DISCOVERY_MODE=search_only veya live ayarlayın."
+    )
+
+
 # ── Main discovery function ────────────────────────────────────────────────────
 
 async def discover_campaign_creators(
@@ -460,6 +485,7 @@ async def discover_campaign_creators(
     # ── Step 4: No verified creators → insufficient_verified_data ────────────
 
     if not verified_creators:
+        live_hint = _live_discovery_hint(brief)
         return CampaignDiscoveryResult(
             status="insufficient_verified_data",
             message=(
@@ -467,7 +493,7 @@ async def discover_campaign_creators(
                 "Mock veya archive fallback önerisi üretilmedi. "
                 f"Toplam {total_candidates} aday incelendi, {total_excluded} tanesi "
                 "yetersiz veri kalitesi nedeniyle elendi. "
-                "Provider bağlantılarını kontrol edin veya kriterleri genişletin."
+                + live_hint
             ),
             creators=[],
             report_source="insufficient_data",
@@ -617,7 +643,7 @@ async def discover_campaign_creators(
         report_source="server_provider_discovery",
         data_confidence=overall_confidence,
         provider_status=provider_status,
-        discovery_sources=["archive_verified"],
+        discovery_sources=["archive_verified"] + (["live_available"] if _live_discovery_available() else []),
         portfolio_summary=portfolio_summary,
         budget_optimizer_status=budget_optimizer_status,
         total_excluded=total_excluded,

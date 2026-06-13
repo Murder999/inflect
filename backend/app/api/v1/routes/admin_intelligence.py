@@ -301,8 +301,8 @@ async def test_provider(
 
 # ── Migration Health Endpoints (Part 17) ─────────────────────────────────────
 
-# Expected Alembic head revision for Part 22
-_EXPECTED_HEAD = "0006_part22_brand_ai"
+# Expected Alembic head revision for Part 24
+_EXPECTED_HEAD = "0007_part24_live_disc"
 
 # Critical tables that must exist for the application to function
 _CRITICAL_TABLES = [
@@ -312,6 +312,7 @@ _CRITICAL_TABLES = [
     "competitor_profiles", "competitor_campaign_signals",
     "influencer_risk_reports", "risk_alerts", "risk_scan_logs",
     "intelligence_features", "intelligence_usage_logs",
+    "influencer_discovery_runs", "influencer_discovery_candidates",
 ]
 
 # Critical indexes for performance

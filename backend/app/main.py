@@ -23,6 +23,7 @@ from app.api.v1.routes import admin_intelligence       # Part 16 Intelligence Bi
 from app.api.v1.routes import risk_alerts              # Part 17 Risk Alert Management
 from app.api.v1.routes import entitlements             # Part 18 Entitlement & Pricing
 from app.api.v1.routes import brand_match              # Part 22 AI Brand Match
+from app.api.v1.routes import influencer_discovery     # Part 24 Live Discovery
 
 logging.basicConfig(
     level=logging.INFO,
@@ -243,6 +244,9 @@ app.include_router(entitlements.router, prefix=PREFIX)
 # AI Brand Match (Part 22)
 app.include_router(brand_match.router, prefix=PREFIX)
 
+# Live Influencer Discovery (Part 24)
+app.include_router(influencer_discovery.router, prefix=PREFIX)
+
 
 @app.get("/")
 def root():
@@ -250,7 +254,7 @@ def root():
         "name":    "Inflect API",
         "version": "10.4.0",
         "status":  "online",
-        "ai":      "part-22-brand-match-backend",
+        "ai":      "part-24-live-discovery",
     }
 
 
@@ -259,10 +263,11 @@ def health(request: Request):
     db_ok = getattr(request.app.state, "db_ok", True)
     return {
         "status":           "ok" if db_ok else "db_error",
-        "version":          "10.4.0",
+        "version":          "10.5.0",
         "env":              settings.APP_ENV,
         "ai_orchestrator":  "part-11",
         "risk_scanner":     "part-17",
+        "live_discovery":   "part-24",
     }
 
 

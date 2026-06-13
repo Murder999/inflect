@@ -1245,3 +1245,110 @@ export const brandMatchApi = {
       body: JSON.stringify(body),
     }),
 };
+
+// ── Part 24: Live Influencer Discovery ───────────────────────────────────────
+
+export interface DiscoveryProviderStatus {
+  name: string;
+  platform: string;
+  available: boolean;
+  disabled_reason?: string;
+  error?: string;
+  candidates_found: number;
+}
+
+export interface DiscoveryCandidateCard {
+  handle: string;
+  display_name?: string;
+  platform: string;
+  profile_url: string;
+  bio?: string;
+  avatar_url?: string;
+  follower_count?: number;
+  engagement_hint?: number;
+  category_hint?: string;
+  location_hint?: string;
+  source: string;
+  source_confidence: string;
+  evidence_quality: string;
+}
+
+export interface DiscoveryQueryPlan {
+  platform: string;
+  keywords: string[];
+  hashtags: string[];
+  source_reason: string;
+}
+
+export interface DiscoveryLiveRequest {
+  brand_name: string;
+  category: string;
+  target_market?: string;
+  platforms?: string[];
+  limit?: number;
+  product_signals?: string[];
+  audience_signals?: string[];
+  language?: string;
+  campaign_id?: number;
+  brand_analysis_id?: number;
+}
+
+export interface DiscoveryLiveResponse {
+  /** provider_missing | discovery_completed | discovery_partial | discovery_failed */
+  status: string;
+  discovery_run_id?: number;
+  provider_statuses: DiscoveryProviderStatus[];
+  query_plan: DiscoveryQueryPlan[];
+  candidates: DiscoveryCandidateCard[];
+  verified_candidates_count: number;
+  insufficient_data: boolean;
+  blocked_reason?: string;
+  next_actions: string[];
+  generated_at: string;
+}
+
+export interface DiscoveryRunDetail {
+  run_id: number;
+  status: string;
+  candidates_count: number;
+  verified_candidates_count: number;
+  provider_status: Record<string, unknown>;
+  query_plan: DiscoveryQueryPlan[];
+  input_payload: Record<string, unknown>;
+  created_at?: string;
+  completed_at?: string;
+  candidates: Array<{
+    id: number;
+    handle: string;
+    display_name?: string;
+    platform: string;
+    profile_url: string;
+    source_provider: string;
+    evidence_quality: string;
+    overall_score?: number;
+    cache_status: string;
+  }>;
+}
+
+export const discoveryApi = {
+  startLive: (body: DiscoveryLiveRequest): Promise<DiscoveryLiveResponse> =>
+    request<DiscoveryLiveResponse>("/influencers/discover/live", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getRun: (runId: number): Promise<DiscoveryRunDetail> =>
+    request<DiscoveryRunDetail>(`/influencers/discover/runs/${runId}`),
+
+  enrichCandidate: (candidateId: number): Promise<{
+    candidate_id: number;
+    enriched: boolean;
+    evidence_quality: string;
+    followers?: number;
+    engagement_rate?: number;
+    reason?: string;
+  }> =>
+    request(`/influencers/discover/candidates/${candidateId}/enrich`, {
+      method: "POST",
+    }),
+};

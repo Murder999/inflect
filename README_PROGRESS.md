@@ -1,3 +1,59 @@
+# README_PROGRESS — Part 24: Live Influencer Discovery Provider Engine (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.5
+
+## Bu Session'da Yapılan Değişiklikler
+
+Production-grade provider-based live influencer discovery engine eklendi. Arşiv artık yalnızca cache/enrichment olarak kullanılır; primary discovery source her zaman live provider'lardan gelir.
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/services/influencer_discovery/__init__.py` | Package init |
+| `backend/app/services/influencer_discovery/base.py` | Provider abstraction: `DiscoveryQuery`, `CreatorCandidate`, `CreatorEvidence`, `ProviderStatus`, `DiscoveryResult`, `InfluencerDiscoveryProvider` ABC |
+| `backend/app/services/influencer_discovery/query_builder.py` | Category/locale/platform tabanlı query oluşturucu (no hardcoded brand logic) |
+| `backend/app/services/influencer_discovery/normalizer.py` | Raw provider → `CreatorCandidate`; URL'den platform/handle çıkarma; `evidence_quality_from_fields()` |
+| `backend/app/services/influencer_discovery/dedupe.py` | platform+handle ve profile_url'e göre deduplication |
+| `backend/app/services/influencer_discovery/scoring.py` | Nullable scores (`CandidateScore`); evidence_quality="none" → excluded |
+| `backend/app/services/influencer_discovery/cache.py` | `get_cached_candidates()` + `save_candidates_to_cache()` (TTL=24h, etiket: "cached") |
+| `backend/app/services/influencer_discovery/providers/youtube_provider.py` | YouTube Data API v3 provider (gracefully disabled when no YOUTUBE_API_KEY) |
+| `backend/app/services/influencer_discovery/providers/search_provider.py` | Google Custom Search / SerpAPI provider (disabled when no SEARCH_API_KEY) |
+| `backend/app/services/influencer_discovery/providers/social_search_provider.py` | Instagram/TikTok — always disabled, explicit reason returned |
+| `backend/app/services/influencer_discovery/discovery_orchestrator.py` | Main orchestrator: mode check → query build → provider run → dedupe → score → cache → persist |
+| `backend/app/models/influencer_discovery.py` | `InfluencerDiscoveryRun` + `InfluencerDiscoveryCandidate` models |
+| `backend/alembic/versions/0007_part24_live_disc.py` | Migration: `influencer_discovery_runs` + `influencer_discovery_candidates` tables |
+| `backend/app/api/v1/routes/influencer_discovery.py` | `POST /live`, `GET /runs/{id}`, `POST /candidates/{id}/enrich` |
+| `backend/app/models/__init__.py` | Discovery model imports eklendi |
+| `backend/app/main.py` | influencer_discovery router eklendi (v10.5) |
+| `backend/app/api/v1/routes/admin_intelligence.py` | `_EXPECTED_HEAD` → `0007_part24_live_disc`; discovery tables in `_CRITICAL_TABLES` |
+| `backend/app/services/campaign_discovery_service.py` | `_live_discovery_hint()`: archive yetersiz iken live discovery CTA; `discovery_sources` live_available işaretlenir |
+| `frontend/lib/api.ts` | `DiscoveryLiveRequest`, `DiscoveryLiveResponse`, `DiscoveryCandidateCard`, `discoveryApi` eklendi |
+| `frontend/app/(app)/intelligence/brand-match/page.tsx` | `startLiveDiscovery()` handler; "Live Influencer Discovery Başlat" butonu (`partial_no_creators` state'inde); provider_missing/running/completed UI states |
+| `frontend/app/(app)/campaigns/simulate/page.tsx` | `startLiveDiscovery()` handler; creator pool < 20 iken CTA; discovery state UI |
+| `backend/tests/test_influencer_discovery.py` | 32 yeni test (disabled mode, social provider, query builder, normalizer, dedupe, scoring, DiscoveryResult, alembic revision IDs, no fake data) |
+
+## Test Sonuçları
+
+- `test_influencer_discovery.py`: **32/32 ✅**
+- `test_brand_analysis.py`: **55/55 ✅** (regression yok)
+- `npm run typecheck`: **✅ temiz**
+
+## NEVER Kuralları (Part 24)
+
+- NEVER search only archive
+- NEVER stop discovery if archive empty/insufficient
+- NEVER generate fake/mock/demo creators
+- NEVER show placeholder influencers
+- NEVER show mock data as real creators
+- NEVER act as if live discovery happened when provider not configured
+- NEVER write hardcoded brand/platform-specific logic
+- NEVER depend on single platform
+- NEVER use alembic stamp head blindly
+- Alembic revision IDs ≤ 32 characters
+
+---
+
 # README_PROGRESS — Part 22 Final Patch: Section-Level Readiness Gating (2026-06-13)
 
 **Tarih:** 2026-06-13

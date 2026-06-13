@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { discoverApi, campaignsApi } from "@/lib/api";
+import { discoverApi, campaignsApi, discoveryApi, type DiscoveryLiveResponse } from "@/lib/api";
 import {
   runIntelligentSimulation, interpretCampaign,
   BRAND_TAXONOMY, GOAL_META, getCreatorTier,
@@ -13,7 +13,7 @@ import {
   Zap, ArrowRight, ArrowLeft, BarChart2, TrendingUp, Users, DollarSign,
   Target, Globe, Tag, Calendar, Sparkles, AlertTriangle, CheckCircle,
   ChevronRight, Save, Eye, Star, Shield, RefreshCw, Lightbulb,
-  Info, XCircle, MapPin, Layers, Search, ChevronDown,
+  Info, XCircle, MapPin, Layers, Search, ChevronDown, Wifi, WifiOff,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -294,6 +294,8 @@ export default function SimulatePage() {
   const [saving,       setSaving]      = useState(false);
   const [savedId,      setSavedId]     = useState<number | null>(null);
   const [expandedCreator, setExpandedCreator] = useState<number | null>(null);
+  const [discoveryState,  setDiscoveryState]  = useState<"idle"|"running"|"completed"|"missing">("idle");
+  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryLiveResponse | null>(null);
 
   const set = <K extends keyof SimConfig>(k: K) =>
     (v: SimConfig[K]) => setConfig(p => ({ ...p, [k]: v }));
@@ -385,6 +387,25 @@ export default function SimulatePage() {
       if (e instanceof Error) setErr(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function startLiveDiscovery() {
+    if (!result) return;
+    setDiscoveryState("running");
+    setDiscoveryResult(null);
+    try {
+      const resp = await discoveryApi.startLive({
+        brand_name:    config.product,
+        category:      config.category || result.campaignProfile.primaryCategory,
+        target_market: config.country  || "Global",
+        platforms:     config.platform === "all" ? ["youtube"] : [config.platform],
+        limit:         20,
+      });
+      setDiscoveryState(resp.status === "provider_missing" ? "missing" : "completed");
+      setDiscoveryResult(resp);
+    } catch {
+      setDiscoveryState("missing");
     }
   }
 
@@ -705,6 +726,57 @@ export default function SimulatePage() {
           <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>
             <strong style={{ color: "#6366F1" }}>Düşük Güven Creator:</strong> Bazı creator'lar (%60–%75 veri tamamlama) portföyde yer alıyor ancak bütçenin en fazla %15&apos;i tahsis edildi.
             Daha yüksek bütçe payı için Discovery&apos;den tam analiz yapın.
+          </div>
+        </div>
+      )}
+
+      {/* ── Live Discovery CTA when creator pool is thin ── */}
+      {result.creatorsFromDB < 20 && (
+        <div style={{ background: "var(--bg-elevated)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 12, padding: "16px 20px", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#6366F1", marginBottom: 5, display: "flex", alignItems: "center", gap: 6 }}>
+                <Wifi size={14} /> Creator Havuzu Yetersiz ({result.creatorsFromDB}/20)
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.6 }}>
+                Kampanya için yeterli creator verisi yok. Live Discovery ile YouTube&apos;dan gerçek creator adayları getirilebilir.
+              </div>
+              {discoveryState === "completed" && discoveryResult && (
+                <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 8, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--green)", marginBottom: 4 }}>
+                    <CheckCircle size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                    {discoveryResult.verified_candidates_count} aday bulundu
+                  </div>
+                  {discoveryResult.candidates.slice(0, 4).map(c => (
+                    <div key={c.handle} style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.7 }}>
+                      · {c.display_name || c.handle} ({c.platform})
+                    </div>
+                  ))}
+                  {discoveryResult.next_actions.slice(0, 2).map((a, i) => (
+                    <div key={i} style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.7 }}>· {a}</div>
+                  ))}
+                </div>
+              )}
+              {discoveryState === "missing" && discoveryResult && (
+                <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 8, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--red)", marginBottom: 4 }}>
+                    <WifiOff size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                    Provider yapılandırılmamış
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>{discoveryResult.blocked_reason}</div>
+                </div>
+              )}
+            </div>
+            {discoveryState === "idle" && (
+              <button onClick={startLiveDiscovery} style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 18px", borderRadius: 9, background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "#fff", fontWeight: 800, fontSize: 12, border: "none", cursor: "pointer", letterSpacing: "-0.02em", alignSelf: "flex-start" }}>
+                <Wifi size={13} /> Live Discovery Başlat
+              </button>
+            )}
+            {discoveryState === "running" && (
+              <div style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 18px", borderRadius: 9, background: "rgba(99,102,241,0.08)", color: "#6366F1", fontWeight: 700, fontSize: 12, border: "1px solid rgba(99,102,241,0.2)" }}>
+                <RefreshCw size={13} /> Aranıyor…
+              </div>
+            )}
           </div>
         </div>
       )}
