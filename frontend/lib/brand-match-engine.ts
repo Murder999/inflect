@@ -161,8 +161,8 @@ export interface ExpansionOpportunity {
 export interface BrandMatchConfidence {
   analysis:  number;
   audience:  number;
-  creator:   number;
-  genome:    number;
+  creator:   number | null;  // null when creator_matching_ready=false
+  genome:    number | null;  // null when brand_dna_ready=false
   overall:   number;
   grade:     "A" | "B" | "C" | "D";
   reasons:   string[];
@@ -1189,6 +1189,7 @@ export function generateExpansionOpportunities(
   profile: BrandProfile,
   audience: AudienceProfile,
   creators: MatchedCreator[],
+  hasEnoughCreators: boolean = false,
 ): ExpansionOpportunity[] {
   const usedPersonas = new Set(creators.map(c => c.persona));
   const opportunities: ExpansionOpportunity[] = [];
@@ -1225,37 +1226,51 @@ export function generateExpansionOpportunities(
     }
   });
 
-  // Always add geographic expansion if not global
-  if (profile.geoScope !== "Global") {
-    opportunities.push({ segment: "Uluslararası Pazar", opportunity: `${profile.name} için global creator ortaklığı büyüme fırsatı`, rationale: "Yeni coğrafi pazarlarda marka bilinirliği inşası", priority: "Medium", creatorType: "Global Content Creator" });
+  // Only add creator-type suggestions when pool is sufficient
+  if (hasEnoughCreators) {
+    if (profile.geoScope !== "Global") {
+      opportunities.push({ segment: "Uluslararası Pazar", opportunity: `${profile.name} için global creator ortaklığı büyüme fırsatı`, rationale: "Yeni coğrafi pazarlarda marka bilinirliği inşası", priority: "Medium", creatorType: "Global Content Creator" });
+    }
+    opportunities.push({ segment: "Short-Form Video Kitlesi", opportunity: "TikTok/Reels native creator'lar — Z kuşağı erişimi", rationale: "Kısa video formatında marka mesajı daha hızlı yayılıyor", priority: "Medium", creatorType: "Short-Form Creator" });
   }
-
-  // Always add emerging creator types
-  opportunities.push({ segment: "Short-Form Video Kitlesi", opportunity: "TikTok/Reels native creator'lar — Z kuşağı erişimi", rationale: "Kısa video formatında marka mesajı daha hızlı yayılıyor", priority: "Medium", creatorType: "Short-Form Creator" });
 
   return opportunities.slice(0, 6);
 }
 
 // ── Confidence Engine ───────────────────────────────────────────────────────────
 
-export function buildBrandMatchConfidence(creators: MatchedCreator[], profile: BrandProfile): BrandMatchConfidence {
+export function buildBrandMatchConfidence(
+  creators: MatchedCreator[],
+  profile: BrandProfile,
+  creatorMatchingReady: boolean = false,
+  brandDnaReady: boolean = false,
+): BrandMatchConfidence {
   const creatorCount = creators.length;
   const analysisConf = profile.detectedFrom === "url_lookup" ? 90 : profile.detectedFrom === "taxonomy" ? 78 : 55;
   const audienceConf = profile.detectedFrom === "url_lookup" ? 82 : 70;
-  const creatorConf  = creatorCount >= 10 ? 85 : creatorCount >= 5 ? 70 : creatorCount >= 1 ? 55 : 20;
-  const genomeConf   = profile.detectedFrom === "url_lookup" ? 80 : profile.detectedFrom === "taxonomy" ? 70 : 52;
 
-  const overall = Math.round(
-    analysisConf * 0.30 + audienceConf * 0.25 + creatorConf * 0.30 + genomeConf * 0.15
-  );
+  const creatorConf: number | null = creatorMatchingReady
+    ? (creatorCount >= 10 ? 85 : creatorCount >= 5 ? 70 : creatorCount >= 1 ? 55 : 20)
+    : null;
+  const genomeConf: number | null = brandDnaReady
+    ? (profile.detectedFrom === "url_lookup" ? 80 : profile.detectedFrom === "taxonomy" ? 70 : 52)
+    : null;
+
+  // Only weight ready components in overall
+  let weightedSum = analysisConf * 0.30 + audienceConf * 0.25;
+  let weightTotal  = 0.55;
+  if (creatorConf !== null) { weightedSum += creatorConf * 0.30; weightTotal += 0.30; }
+  if (genomeConf  !== null) { weightedSum += genomeConf  * 0.15; weightTotal += 0.15; }
+  const overall = Math.round(weightedSum / weightTotal);
 
   const grade: "A" | "B" | "C" | "D" = overall >= 80 ? "A" : overall >= 65 ? "B" : overall >= 50 ? "C" : "D";
 
   const reasons: string[] = [];
   if (profile.detectedFrom === "url_lookup") reasons.push("Marka doğrulaması: URL veritabanı eşleşmesi");
   if (profile.detectedFrom === "domain_extraction") reasons.push("Marka çıkarımı: domain tespiti — manuel doğrulama önerilir");
-  if (creatorCount === 0) reasons.push("Creator verisi yok — genome analizi ve portföy teorik");
-  if (creatorCount >= 10) reasons.push(`${creatorCount} creator verisi mevcut — güvenilir genome eşleşmesi`);
+  if (!creatorMatchingReady) reasons.push(`Creator havuzu yetersiz (${creatorCount}/${MIN_CREATOR_POOL}) — creator güven skoru hesaplanamadı`);
+  else if (creatorCount >= 10) reasons.push(`${creatorCount} creator verisi mevcut — güvenilir genome eşleşmesi`);
+  if (!brandDnaReady) reasons.push("Web sitesi verisi doğrulanamadı — genome güven skoru hesaplanamadı");
   reasons.push("Revenue, ROAS ve Conversion tahminleri bu raporda yer almaz — geçmiş kampanya verisi gerektirir");
 
   return { analysis: analysisConf, audience: audienceConf, creator: creatorConf, genome: genomeConf, overall, grade, reasons };
@@ -1270,12 +1285,16 @@ export function runBrandMatchAnalysis(
     websiteEvidence?: BrandWebsiteEvidence;
     targetMarket?: string;
     competitorUrl?: string;
+    brand_dna_ready?: boolean;
   },
 ): BrandMatchResult {
   const { profile, genome, tone, audience } = analyzeBrand(url);
   const targetMarket = options?.targetMarket || "Global";
   const websiteEvidence = options?.websiteEvidence;
   const competitorUrl = options?.competitorUrl;
+
+  // Backend-authoritative readiness flag (default false if not provided)
+  const brandDnaReady = options?.brand_dna_ready ?? false;
 
   // Build evidence-annotated genome
   const evidenceGenome = buildEvidenceGenome(genome, websiteEvidence, profile);
@@ -1288,6 +1307,9 @@ export function runBrandMatchAnalysis(
     seen.add(key); return true;
   });
 
+  const hasEnoughCreators = unique.length >= MIN_CREATOR_POOL;
+  const creatorMatchingReady = hasEnoughCreators;
+
   // Score every creator (with targetMarket awareness)
   const scored = unique
     .map(c => computeCreatorMatchScore(c, profile, genome, audience, targetMarket))
@@ -1298,19 +1320,18 @@ export function runBrandMatchAnalysis(
   const portfolio = buildBrandPortfolio(goodFits, profile);
   const overlap   = analyzeAudienceOverlap(goodFits);
   const mismatches= detectMismatches(scored, profile);
-  const expansions= generateExpansionOpportunities(profile, audience, goodFits);
-  const confidence= buildBrandMatchConfidence(scored, profile);
+  const expansions= generateExpansionOpportunities(profile, audience, goodFits, hasEnoughCreators);
+  const confidence= buildBrandMatchConfidence(scored, profile, creatorMatchingReady, brandDnaReady);
   const creatorCoverage = analyzeCreatorCoverage(rawCreators, targetMarket);
 
-  const insights     = buildInsights(profile, scored, genome, confidence);
-  const risks        = buildRisks(profile, mismatches, overlap, scored);
-  const opportunities= buildOpportunities(profile, scored, expansions);
-  const nextActions  = buildNextActions(profile, scored, confidence);
-  const summary      = buildSummary(profile, scored, genome, confidence);
-  const dataSourceNotes = buildDataNotes(profile, scored);
+  const insights      = buildInsights(profile, scored, genome, confidence, hasEnoughCreators, brandDnaReady);
+  const risks         = buildRisks(profile, mismatches, overlap, scored, hasEnoughCreators);
+  const opportunities = buildOpportunities(profile, scored, expansions, hasEnoughCreators, brandDnaReady);
+  const nextActions   = buildNextActions(profile, scored, confidence);
+  const summary       = buildSummary(profile, scored, genome, confidence, brandDnaReady);
+  const dataSourceNotes = buildDataNotes(profile, scored, hasEnoughCreators);
 
   const hasWebEvidence = options?.websiteEvidence?.fetchStatus === "success";
-  const hasEnoughCreators = unique.length >= MIN_CREATOR_POOL;
 
   const reportStatus: BrandMatchReportStatus = !hasWebEvidence
     ? "insufficient_web_evidence"
@@ -1333,8 +1354,7 @@ export function runBrandMatchAnalysis(
 
 // ── Narrative Builders ──────────────────────────────────────────────────────────
 
-function buildSummary(profile: BrandProfile, creators: MatchedCreator[], genome: BrandGenome, conf: BrandMatchConfidence): string {
-  const top3  = genome.topTraits.slice(0, 3).join(", ").toLowerCase();
+function buildSummary(profile: BrandProfile, creators: MatchedCreator[], genome: BrandGenome, conf: BrandMatchConfidence, brandDnaReady: boolean): string {
   const count = creators.length;
   const avg   = count > 0 ? Math.round(creators.reduce((s, c) => s + c.scores.final, 0) / count) : 0;
 
@@ -1344,26 +1364,58 @@ function buildSummary(profile: BrandProfile, creators: MatchedCreator[], genome:
     ? `Creator havuzu yetersiz (${count}/${MIN_CREATOR_POOL} minimum) — eşleşme özeti üretilmedi. Daha fazla influencer analiz edin.`
     : `${count} creator analiz edildi; ortalama Genome Compat. skoru ${avg}/100.`;
 
-  return `${profile.name}, ${profile.industry} sektöründe ${profile.marketTier.toLowerCase()} segment konumlamasıyla faaliyet göstermektedir. Marka DNA'sı en güçlü şekilde ${top3} boyutlarında öne çıkmaktadır. ${creatorNote} Güven seviyesi: ${conf.grade} (${conf.overall}/100). Revenue, ROAS ve Conversion tahminleri bu raporda yer almaz.`;
+  const dnaNote = brandDnaReady
+    ? `Marka DNA'sı en güçlü şekilde ${genome.topTraits.slice(0, 3).join(", ").toLowerCase()} boyutlarında öne çıkmaktadır. `
+    : "";
+
+  return `${profile.name}, ${profile.industry} sektöründe ${profile.marketTier.toLowerCase()} segment konumlamasıyla faaliyet göstermektedir. ${dnaNote}${creatorNote} Güven seviyesi: ${conf.grade} (${conf.overall}/100). Revenue, ROAS ve Conversion tahminleri bu raporda yer almaz.`;
 }
 
-function buildInsights(profile: BrandProfile, creators: MatchedCreator[], genome: BrandGenome, conf: BrandMatchConfidence): string[] {
+function buildInsights(
+  profile: BrandProfile,
+  creators: MatchedCreator[],
+  genome: BrandGenome,
+  conf: BrandMatchConfidence,
+  hasEnoughCreators: boolean,
+  brandDnaReady: boolean,
+): string[] {
   const out: string[] = [];
-  if (genome.trust >= 75)       out.push(`${profile.name}'ın güven DNA'sı (${genome.trust}/100) yüksek — bu markaya creator seçiminde fraud güvenliği en kritik faktör.`);
-  if (genome.community >= 70)   out.push(`Topluluk boyutu güçlü (${genome.community}/100) — engagement odaklı micro ve mid-tier creator'lar önceliklendirilmeli.`);
-  if (genome.luxury >= 70)      out.push(`Lüks konumlama (${genome.luxury}/100) — hero ve macro creator'lar marka aspirasyonunu korumalı.`);
-  if (genome.innovation >= 80)  out.push(`Yüksek inovasyon DNA'sı (${genome.innovation}/100) — early adopter ve tech-forward creator'lar öncelikli tercih.`);
+
+  if (!hasEnoughCreators) {
+    out.push(`${profile.name} marka analizi tamamlandı — creator eşleşmesi için minimum ${MIN_CREATOR_POOL} influencer gerekli (şu an: ${creators.length}).`);
+    if (brandDnaReady) out.push("Marka DNA'sı web sitesi verisiyle analiz edildi — creator havuzu tamamlandığında genome eşleşmesi üretilecek.");
+    out.push(`${profile.industry} sektöründe ${profile.marketTier.toLowerCase()} segment konumlaması tespit edildi.`);
+    return out.slice(0, 5);
+  }
+
+  if (genome.trust >= 75)      out.push(`${profile.name}'ın güven DNA'sı (${genome.trust}/100) yüksek — creator seçiminde fraud güvenliği en kritik faktör.`);
+  if (genome.community >= 70)  out.push(`Topluluk boyutu güçlü (${genome.community}/100) — engagement odaklı micro ve mid-tier creator'lar önceliklendirilmeli.`);
+  if (genome.luxury >= 70)     out.push(`Lüks konumlama (${genome.luxury}/100) — hero ve macro creator'lar marka aspirasyonunu korumalı.`);
+  if (genome.innovation >= 80) out.push(`Yüksek inovasyon DNA'sı (${genome.innovation}/100) — early adopter ve tech-forward creator'lar öncelikli tercih.`);
   if (creators.length > 0) {
     const mismatches = creators.filter(c => c.isMismatch).length;
     if (mismatches > 0) out.push(`${mismatches} creator yüksek takipçi sayısına rağmen düşük brand uyumu gösteriyor — dikkatli değerlendirin.`);
   }
   if (profile.geoScope === "Regional") out.push("Bölgesel marka stratejisi — yerel dil ve kültürle içerik üreten creator'lar dönüşümü artırır.");
-  if (out.length < 4) out.push(`${profile.name} için Genome Compatibility skoru, takipçi sayısından çok daha güvenilir bir seçim kriteridir.`);
+  if (out.length < 4 && brandDnaReady) out.push(`${profile.name} için Genome Compatibility skoru, takipçi sayısından çok daha güvenilir bir seçim kriteridir.`);
   return out.slice(0, 5);
 }
 
-function buildRisks(profile: BrandProfile, mismatches: MismatchWarning[], overlap: AudienceOverlapResult, creators: MatchedCreator[]): string[] {
+function buildRisks(
+  profile: BrandProfile,
+  mismatches: MismatchWarning[],
+  overlap: AudienceOverlapResult,
+  creators: MatchedCreator[],
+  hasEnoughCreators: boolean,
+): string[] {
   const out: string[] = [];
+
+  if (!hasEnoughCreators) {
+    out.push(`Creator havuzu yetersiz (${creators.length}/${MIN_CREATOR_POOL}) — creator bazlı risk analizi üretilmedi.`);
+    out.push("Revenue ve ROAS verileri olmadan finansal ROI garantisi verilemez — kampanya sonuçları gerçek verilerle ölçülmeli.");
+    return out.slice(0, 5);
+  }
+
   if (mismatches.length > 0) out.push(`${mismatches.length} creator düşük brand match riskine sahip — portföyde yer alması marka güvenilirliğini zayıflatabilir.`);
   if (overlap.saturationRisk === "High") out.push(`Kitle doygunluk riski yüksek (%${overlap.estimatedOverlapPct} örtüşme) — ek creator'lar farklı kategorilerden seçilmeli.`);
   if (creators.filter(c => c.riskLevel === "High").length > 0) out.push("Yüksek fraud riskli creator'lar portföyde yer alıyor — içerik yayınlanmadan önce doğrulama yapılmalı.");
@@ -1372,13 +1424,26 @@ function buildRisks(profile: BrandProfile, mismatches: MismatchWarning[], overla
   return out.slice(0, 5);
 }
 
-function buildOpportunities(profile: BrandProfile, creators: MatchedCreator[], expansions: ExpansionOpportunity[]): string[] {
+function buildOpportunities(
+  profile: BrandProfile,
+  creators: MatchedCreator[],
+  expansions: ExpansionOpportunity[],
+  hasEnoughCreators: boolean,
+  brandDnaReady: boolean,
+): string[] {
   const out: string[] = [];
+
+  if (!hasEnoughCreators) {
+    out.push("Creator havuzu dolduğunda brand match skorları otomatik hesaplanacak — şu an creator eşleşmesi yok.");
+    out.push(`Minimum ${MIN_CREATOR_POOL} influencer analiz edildiğinde portföy ve fırsat önerileri üretilecek.`);
+    return out.slice(0, 4);
+  }
+
   const highMatch = creators.filter(c => c.scores.final >= 80);
   if (highMatch.length > 0) out.push(`${highMatch.length} creator %80+ Brand Match skoruna sahip — uzun vadeli ambassador programı için değerlendirilmeli.`);
   if (expansions.length > 0) out.push(`${expansions[0].segment} kitlesi için creator ortaklığı yeni büyüme potansiyeli sunuyor.`);
   if (profile.marketTier !== "Luxury") out.push("Micro creator odaklı UGC (kullanıcı içerik üretimi) kampanyası marka güvenilirliğini organik olarak artırır.");
-  out.push("Genome Compatibility skoru ≥80 olan creator'larla uzun dönemli sözleşme, kısa vadeli bir kez işbirliğinden 3-4x daha etkili sonuç üretir.");
+  if (brandDnaReady) out.push("Genome Compatibility skoru ≥80 olan creator'larla uzun dönemli sözleşme, kısa vadeli bir kez işbirliğinden 3-4x daha etkili sonuç üretir.");
   return out.slice(0, 4);
 }
 
@@ -1406,15 +1471,20 @@ function buildNextActions(profile: BrandProfile, creators: MatchedCreator[], con
   ];
 }
 
-function buildDataNotes(profile: BrandProfile, creators: MatchedCreator[]): string[] {
-  return [
+function buildDataNotes(profile: BrandProfile, creators: MatchedCreator[], hasEnoughCreators: boolean): string[] {
+  const notes: string[] = [
     `Marka analizi: ${profile.detectedFrom === "url_lookup" ? "URL veritabanı doğrulaması" : profile.detectedFrom === "taxonomy" ? "Marka taksonomisi eşleşmesi" : "Domain çıkarımı — manuel doğrulama önerilir"}`,
     `Brand Genome: ${profile.primaryCategory} kategori profili + marka olgunluk ayarlaması`,
-    `Creator skorları: Gerçek engagement_quality, brand_fit, fraud_score, momentum verileri kullanıldı`,
-    `Genome Compatibility: 10 boyutlu ağırlıklı benzerlik hesabı (belirsiz değil, deterministik)`,
-    `Kitle örtüşmesi: Kategori çeşitliliği tabanlı tahmin — gerçek kitle datası gerektirmez`,
-    `Revenue / ROAS / Conversion: Bu raporda yer almaz — geçmiş kampanya verisi olmadan hesaplanamaz`,
   ];
+  if (hasEnoughCreators) {
+    notes.push(`Creator skorları: Gerçek engagement_quality, brand_fit, fraud_score, momentum verileri kullanıldı`);
+    notes.push(`Genome Compatibility: 10 boyutlu ağırlıklı benzerlik hesabı (belirsiz değil, deterministik)`);
+  } else {
+    notes.push(`Creator skorları: Creator havuzu yetersiz (${creators.length}/${MIN_CREATOR_POOL}) — creator skoru hesaplanamadı`);
+  }
+  notes.push(`Kitle örtüşmesi: Kategori çeşitliliği tabanlı tahmin — gerçek kitle datası gerektirmez`);
+  notes.push(`Revenue / ROAS / Conversion: Bu raporda yer almaz — geçmiş kampanya verisi olmadan hesaplanamaz`);
+  return notes;
 }
 
 // ── Autocomplete Brand Suggestions ─────────────────────────────────────────────

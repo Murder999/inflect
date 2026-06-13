@@ -337,6 +337,7 @@ export default function BrandMatchPage() {
       websiteEvidence,
       targetMarket,
       competitorUrl: competitorUrl.trim() || undefined,
+      brand_dna_ready: backendResp.brand_dna_ready,
     });
 
     await new Promise(r => setTimeout(r, 800));
@@ -633,6 +634,9 @@ export default function BrandMatchPage() {
     reportStatus, verifiedReport,
   } = result;
 
+  const creatorMatchingReady = creators.length >= MIN_CREATOR_POOL;
+  const brandDnaReady = backendResponse?.brand_dna_ready ?? false;
+
   const genomeChartData = GENOME_LABELS.map(({ key, label }) => ({
     subject: label,
     Marka:   (genome as any)[key] || 0,
@@ -802,11 +806,27 @@ export default function BrandMatchPage() {
 
         {/* Genome Radar */}
         <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "20px 22px" }}>
-          <SectionTitle icon={Dna} title="Brand Genome DNA" sub={genome.summary} color="#6366F1" />
-          <GenomeRadar brand={Object.fromEntries(GENOME_LABELS.map(({ key }) => [key, (genome as any)[key]]))} creator={genomeCreator ? Object.fromEntries(GENOME_LABELS.map(({ key }) => [key, (genomeCreator.creatorGenome as any)[key]])) : undefined} />
-          {genomeCreator && (
-            <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-3)", textAlign: "center" }}>
-              Yeşil = {brand.name} · Mor = @{genomeCreator.card.username} · Genome Uyumu: <span style={{ color: "var(--green)", fontWeight: 700 }}>{genomeCreator.scores.genomeCompatibility}/100</span>
+          <SectionTitle
+            icon={Dna}
+            title="Brand Genome DNA"
+            sub={brandDnaReady ? genome.summary : "Web sitesi verisi doğrulanamadı — DNA analizi kullanılamaz"}
+            color={brandDnaReady ? "#6366F1" : "var(--text-3)"}
+          />
+          {brandDnaReady ? (
+            <>
+              <GenomeRadar brand={Object.fromEntries(GENOME_LABELS.map(({ key }) => [key, (genome as any)[key]]))} creator={genomeCreator ? Object.fromEntries(GENOME_LABELS.map(({ key }) => [key, (genomeCreator.creatorGenome as any)[key]])) : undefined} />
+              {genomeCreator && (
+                <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-3)", textAlign: "center" }}>
+                  Yeşil = {brand.name} · Mor = @{genomeCreator.card.username} · Genome Uyumu: <span style={{ color: "var(--green)", fontWeight: 700 }}>{genomeCreator.scores.genomeCompatibility}/100</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 200, gap: 10, background: "var(--bg-subtle)", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <Dna size={28} color="var(--text-3)" style={{ opacity: 0.3 }} />
+              <div style={{ fontSize: 12, color: "var(--text-3)", textAlign: "center", lineHeight: 1.6, maxWidth: 220 }}>
+                Brand DNA radar chart<br />web sitesi verisi olmadan üretilemiyor
+              </div>
             </div>
           )}
         </div>
@@ -1175,7 +1195,9 @@ export default function BrandMatchPage() {
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-1)", marginBottom: 5 }}>{exp.segment}</div>
               <div style={{ fontSize: 11, color: "var(--text-2)", lineHeight: 1.55, marginBottom: 8 }}>{exp.opportunity}</div>
-              <div style={{ fontSize: 10, color: "var(--text-3)", borderTop: "1px solid var(--line)", paddingTop: 8 }}>Creator Tipi: <strong style={{ color: "var(--text-2)" }}>{exp.creatorType}</strong></div>
+              {creatorMatchingReady && (
+                <div style={{ fontSize: 10, color: "var(--text-3)", borderTop: "1px solid var(--line)", paddingTop: 8 }}>Creator Tipi: <strong style={{ color: "var(--text-2)" }}>{exp.creatorType}</strong></div>
+              )}
             </div>
           ))}
         </div>
@@ -1227,10 +1249,16 @@ export default function BrandMatchPage() {
       {/* ── Confidence Breakdown ── */}
       <div style={{ background: "var(--bg-elevated)", borderRadius: 14, border: "1px solid var(--line)", padding: "20px 22px", marginBottom: 16 }}>
         <SectionTitle icon={Shield} title="Güven Motoru & Şeffaflık" sub="Analiz güvenilirliği ve veri kaynağı detayları" color="var(--text-3)" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
-          {[["Analiz", confidence.analysis], ["Kitle", confidence.audience], ["Creator", confidence.creator], ["Genome", confidence.genome], ["Genel", confidence.overall]].map(([label, val]) => (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${2 + (creatorMatchingReady ? 1 : 0) + (brandDnaReady ? 1 : 0) + 1}, 1fr)`, gap: 10, marginBottom: 16 }}>
+          {([
+            ["Analiz", confidence.analysis],
+            ["Kitle", confidence.audience],
+            ...(confidence.creator !== null ? [["Creator", confidence.creator]] : []),
+            ...(confidence.genome !== null  ? [["Genome",  confidence.genome]]  : []),
+            ["Genel", confidence.overall],
+          ] as [string, number][]).map(([label, val]) => (
             <div key={label} style={{ textAlign: "center", padding: "12px", background: "var(--bg-subtle)", borderRadius: 9 }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: clr(val as number, 55, 75), letterSpacing: "-0.03em" }}>{val}</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: clr(val, 55, 75), letterSpacing: "-0.03em" }}>{val}</div>
               <div style={{ fontSize: 10, color: "var(--text-3)" }}>{label}</div>
             </div>
           ))}

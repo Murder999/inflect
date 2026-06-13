@@ -417,3 +417,120 @@ class TestSectionReadiness:
             brand_dna_ready=False,
         )
         assert resp.brand_dna_ready is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Final Patch: section-level readiness fields
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFinalPatchSectionGating:
+
+    def test_response_schema_has_creator_matching_ready(self):
+        fields = BrandMatchAnalyzeResponse.model_fields
+        assert "creator_matching_ready" in fields
+
+    def test_response_schema_has_trust_scores_ready(self):
+        fields = BrandMatchAnalyzeResponse.model_fields
+        assert "trust_scores_ready" in fields
+
+    def test_response_schema_has_blocked_sections(self):
+        fields = BrandMatchAnalyzeResponse.model_fields
+        assert "blocked_sections" in fields
+
+    def test_response_schema_has_blocked_reasons(self):
+        fields = BrandMatchAnalyzeResponse.model_fields
+        assert "blocked_reasons" in fields
+
+    def test_creator_matching_ready_always_false_from_backend(self):
+        """Backend never knows the creator pool size — always False."""
+        resp = BrandMatchAnalyzeResponse(
+            input="nike.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="success",
+            report_status="verified",
+            verified_report=True,
+            brand_dna_ready=True,
+        )
+        assert resp.creator_matching_ready is False
+
+    def test_trust_scores_ready_true_when_verified(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="nike.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="success",
+            report_status="verified",
+            verified_report=True,
+            brand_dna_ready=True,
+            trust_scores_ready=True,
+        )
+        assert resp.trust_scores_ready is True
+
+    def test_trust_scores_ready_false_when_not_verified(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="example.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="blocked",
+            report_status="fetch_failed",
+            verified_report=False,
+            brand_dna_ready=False,
+            trust_scores_ready=False,
+        )
+        assert resp.trust_scores_ready is False
+
+    def test_blocked_sections_empty_when_verified(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="nike.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="success",
+            report_status="verified",
+            verified_report=True,
+            brand_dna_ready=True,
+            blocked_sections=[],
+        )
+        assert resp.blocked_sections == []
+
+    def test_blocked_sections_nonempty_when_fetch_failed(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="blocked.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="blocked",
+            report_status="fetch_failed",
+            verified_report=False,
+            brand_dna_ready=False,
+            blocked_sections=["brand_genome_dna", "genome_confidence"],
+        )
+        assert "brand_genome_dna" in resp.blocked_sections
+        assert "genome_confidence" in resp.blocked_sections
+
+    def test_blocked_reasons_dict_when_blocked(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="blocked.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="blocked",
+            report_status="fetch_failed",
+            verified_report=False,
+            brand_dna_ready=False,
+            blocked_sections=["brand_genome_dna"],
+            blocked_reasons={"brand_genome_dna": "Web sitesi verisi doğrulanamadı"},
+        )
+        assert resp.blocked_reasons.get("brand_genome_dna") == "Web sitesi verisi doğrulanamadı"
+
+    def test_blocked_reasons_empty_when_verified(self):
+        resp = BrandMatchAnalyzeResponse(
+            input="nike.com",
+            resolver_status="resolved",
+            resolver_confidence="high",
+            fetch_status="success",
+            report_status="verified",
+            verified_report=True,
+            brand_dna_ready=True,
+            blocked_sections=[],
+            blocked_reasons={},
+        )
+        assert resp.blocked_reasons == {}

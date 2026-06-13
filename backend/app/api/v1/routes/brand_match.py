@@ -119,10 +119,15 @@ class BrandMatchAnalyzeResponse(BaseModel):
     locked_sections: list[str] = []
     redaction_level: str = "basic"
     user_message: Optional[str] = None
-    # Section readiness (Post-Audit)
+    # Section readiness (Post-Audit / Final Patch)
     brand_dna_ready: bool = False
     ai_enrichment_ready: bool = False
     min_creator_pool: int = _MIN_CREATOR_POOL
+    # creator_matching_ready is always False from backend (pool is computed client-side)
+    creator_matching_ready: bool = False
+    trust_scores_ready: bool = False
+    blocked_sections: list[str] = []
+    blocked_reasons: dict[str, str] = {}
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -188,6 +193,16 @@ async def analyze_brand(
             brand_dna_ready=False,
             ai_enrichment_ready=False,
             min_creator_pool=_MIN_CREATOR_POOL,
+            creator_matching_ready=False,
+            trust_scores_ready=False,
+            blocked_sections=["brand_genome_dna", "genome_confidence", "creator_matches", "expansion", "insights"],
+            blocked_reasons={
+                "brand_genome_dna": "Domain çözümlenemedi",
+                "genome_confidence": "Domain çözümlenemedi",
+                "creator_matches": "Domain çözümlenemedi",
+                "expansion": "Domain çözümlenemedi",
+                "insights": "Domain çözümlenemedi",
+            },
         )
 
     # ── 2. Website fetch ──────────────────────────────────────────────────────
@@ -288,4 +303,11 @@ async def analyze_brand(
         brand_dna_ready=verified,
         ai_enrichment_ready=False,
         min_creator_pool=_MIN_CREATOR_POOL,
+        creator_matching_ready=False,  # always False from backend; computed client-side
+        trust_scores_ready=verified,
+        blocked_sections=[] if verified else ["brand_genome_dna", "genome_confidence"],
+        blocked_reasons={} if verified else {
+            "brand_genome_dna": "Web sitesi verisi doğrulanamadı",
+            "genome_confidence": "Web sitesi verisi doğrulanamadı",
+        },
     )

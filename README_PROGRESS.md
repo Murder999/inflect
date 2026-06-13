@@ -1,3 +1,43 @@
+# README_PROGRESS — Part 22 Final Patch: Section-Level Readiness Gating (2026-06-13)
+
+**Tarih:** 2026-06-13
+**Durum:** ✅ TAMAMLANDI
+**Versiyon:** v10.4
+
+## Bu Session'da Yapılan Değişiklikler
+
+Karaca canlı testinde tespit edilen kalan section-level veri sızıntıları giderildi. Her bölüm artık yalnızca kendi readiness flag'i hazır olduğunda render ediliyor.
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `backend/app/api/v1/routes/brand_match.py` | `BrandMatchAnalyzeResponse`'a `creator_matching_ready`, `trust_scores_ready`, `blocked_sections`, `blocked_reasons` eklendi; her iki return path güncellendi |
+| `frontend/lib/api.ts` | `BrandMatchAnalyzeResponse`'a 4 yeni alan eklendi |
+| `frontend/lib/brand-match-engine.ts` | `BrandMatchConfidence.creator` / `.genome` → `number | null`; `generateExpansionOpportunities()`: pool < 20 iken "Global Content Creator" / "Short-Form Creator" eklenmez; `buildBrandMatchConfidence()`: readiness flag'lerine göre `null` döner, overall ağırlığı yeniden hesaplanır; `buildSummary()`: `brand_dna_ready=false` iken "Marka DNA'sı en güçlü şekilde..." metni çıkarılır; `buildInsights()` / `buildRisks()` / `buildOpportunities()`: pool < 20 iken creator referanslar filtrelenir, safe placeholder döner; `buildDataNotes()`: pool < 20 iken "Creator skorları: Gerçek..." notu kaldırılır; `runBrandMatchAnalysis()`: `brand_dna_ready` option eklendi, tüm builder'lara iletildi |
+| `frontend/app/(app)/intelligence/brand-match/page.tsx` | `brand_dna_ready` backendResp'ten engine'e iletildi; `creatorMatchingReady` / `brandDnaReady` değişkenleri eklendi; Radar chart: `brandDnaReady=false` iken placeholder gösteriliyor; "Brand Genome DNA" sub: `brandDnaReady`'e göre koşullu; Expansion "Creator Tipi" satırı: `creatorMatchingReady=false` iken gizleniyor; Güven Motoru: Creator/Genome pilleri `null` iken filtreleniyor, grid-cols dinamik |
+| `backend/tests/test_brand_analysis.py` | `TestFinalPatchSectionGating` class: 11 yeni test (toplam 55 test) |
+
+## NEVER Kuralları (Tüm Part 22)
+
+- NEVER show Taxonomy Fallback dimension as scored DNA card
+- NEVER show "Brand DNA en güçlü şekilde..." when `brand_dna_ready=false`
+- NEVER show creator type suggestions (Global Content Creator, Short-Form Creator) when pool < 20
+- NEVER show Creator score in Trust Engine when pool < 20
+- NEVER show Genome score in Trust Engine when `brand_dna_ready=false`
+- NEVER show creator-referencing insights/opportunities/risks when pool < 20
+- NEVER show "Creator skorları: Gerçek..." in data notes when pool < 20
+- NEVER ignore backend readiness fields (`brand_dna_ready`, `trust_scores_ready`, `blocked_sections`)
+- NEVER show radar chart when `brand_dna_ready=false`
+
+## Doğrulama
+
+```
+backend/tests/test_brand_analysis.py   → 55/55 PASSED ✓
+npm run typecheck                      → 0 hata ✓
+npm run build                          → clean build ✓
+```
+
+---
+
 # README_PROGRESS — Part 22 Post-Audit: Taxonomy Leak Removal & Creator Pool Safe Reporting (2026-06-13)
 
 **Tarih:** 2026-06-13

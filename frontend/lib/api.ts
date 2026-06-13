@@ -1228,10 +1228,14 @@ export interface BrandMatchAnalyzeResponse {
   locked_sections: string[];
   redaction_level: string;
   user_message?: string;
-  // Section readiness (Post-Audit)
+  // Section readiness (Post-Audit / Final Patch)
   brand_dna_ready: boolean;
   ai_enrichment_ready: boolean;
   min_creator_pool: number;
+  creator_matching_ready: boolean;
+  trust_scores_ready: boolean;
+  blocked_sections: string[];
+  blocked_reasons: Record<string, string>;
 }
 
 export const brandMatchApi = {
